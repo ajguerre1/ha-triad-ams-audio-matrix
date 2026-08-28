@@ -1,0 +1,51 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect to the matrix",
+        "description": "The matrix does not report its own model, so choose it here. Another controller may already be connected — that is fine, the hardware accepts several at once.",
+        "data": {
+          "name": "Name",
+          "host": "Host",
+          "port": "Port",
+          "model": "Model"
+        },
+        "data_description": {
+          "host": "IP address or hostname of the matrix.",
+          "port": "TCP control port. The default suits every model.",
+          "model": "Determines how many inputs and outputs exist."
+        }
+      },
+      "channels": {
+        "title": "Choose the channels in use",
+        "description": "Clear anything that is not wired up. Unused channels can be enabled later without losing the ones already set up.",
+        "data": {
+          "scan_interval": "Poll interval"
+        },
+        "data_description": {
+          "scan_interval": "How often to re-read the matrix. It does not announce changes, so anything altered by another controller appears at the next poll."
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "No Triad matrix answered. Check the address and that TCP port 52000 is reachable."
+    },
+    "abort": {
+      "already_configured": "This matrix is already set up."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Channels and limits",
+        "description": "Enable the channels in use, cap any zone that should not be driven to full, and set how often the matrix is polled.",
+        "data": {
+          "scan_interval": "Poll interval"
+        },
+        "data_description": {
+          "scan_interval": "Lower values notice another controller's changes sooner, at the cost of more traffic."
+        }
+      }
+    }
+  }
+}
