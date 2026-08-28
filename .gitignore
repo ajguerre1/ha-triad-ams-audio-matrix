@@ -1,0 +1,41 @@
+# Editor and assistant scratch — not part of the project history
+*-local/
+nimbalyst-local/
+
+# Probe output and captured protocol transcripts contain site data: the matrices' LAN addresses,
+# MAC addresses, and the input/output labels, which are source and room names. Sanitised fixtures
+# live in tests/fixtures/ and ARE committed; raw captures are not.
+scripts/output/
+*.raw.log
+captures/
+secrets.yaml
+secrets.local.json
+**/secrets.local.json
+.env
+
+# Local-only working copies that legitimately contain real hosts, room names and entity maps.
+# tests/test_no_site_data.py reads local/site-terms.txt as its denylist, so the denylist itself
+# never enters the repo — which is the point, since the terms are the secret.
+local/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+
+# Tooling caches
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# OS / editor
+Thumbs.db
+desktop.ini
+.DS_Store

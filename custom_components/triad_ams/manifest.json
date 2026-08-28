@@ -1,0 +1,18 @@
+{
+  "domain": "triad_ams",
+  "name": "Triad AMS Audio Matrix",
+  "codeowners": [
+    "@ajguerre1"
+  ],
+  "config_flow": true,
+  "dependencies": [],
+  "documentation": "https://github.com/ajguerre1/ha-triad-ams-audio-matrix",
+  "integration_type": "device",
+  "iot_class": "local_polling",
+  "issue_tracker": "https://github.com/ajguerre1/ha-triad-ams-audio-matrix/issues",
+  "loggers": [
+    "custom_components.triad_ams"
+  ],
+  "requirements": [],
+  "version": "0.1.0"
+}

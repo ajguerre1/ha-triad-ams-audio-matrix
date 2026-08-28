@@ -1,0 +1,16 @@
+# Test dependencies.
+#
+# pytest-homeassistant-custom-component pulls in Home Assistant itself, which cannot be
+# imported on Windows (homeassistant.runner imports POSIX-only fcntl). It is therefore
+# exercised in CI (Ubuntu) rather than on the Windows dev box. Everything under
+# custom_components/triad_ams/ams/ has no Home Assistant imports and its tests run anywhere —
+# that separation is the reason the protocol work is testable during development at all.
+
+pytest>=8.0
+pytest-asyncio>=0.24
+ruff>=0.7
+
+# The device client and the simulator both use only asyncio from the standard library, so there
+# is no transport dependency to declare here and manifest.json stays at requirements: [].
+
+pytest-homeassistant-custom-component>=0.13

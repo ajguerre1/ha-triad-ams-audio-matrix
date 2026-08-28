@@ -1,0 +1,71 @@
+name: Validate
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+  schedule:
+    # Catches breakage from new Home Assistant releases rather than finding out when a zone
+    # stops responding.
+    - cron: "0 6 * * 1"
+
+jobs:
+  hassfest:
+    name: hassfest
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: home-assistant/actions/hassfest@master
+
+  hacs:
+    name: HACS
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hacs/action@main
+        with:
+          category: integration
+
+  lint:
+    name: ruff
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      # CI always installs the latest ruff. A stale local copy passes on rules that did not
+      # exist yet, so upgrade before trusting a local run.
+      - run: pip install ruff
+      - run: ruff check .
+      - run: ruff format --check .
+
+  strings:
+    name: strings/translations parity
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # strings.json and translations/en.json must stay byte-identical. `diff` also fails when
+      # exactly one of them exists, which is the other way this drifts.
+      - name: strings.json and translations/en.json must be identical
+        run: |
+          base=custom_components/triad_ams
+          if [ ! -e "$base/strings.json" ] && [ ! -e "$base/translations/en.json" ]; then
+            echo "Neither file exists yet - nothing to compare."
+            exit 0
+          fi
+          diff "$base/strings.json" "$base/translations/en.json"
+
+  test:
+    name: pytest
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      # Home Assistant cannot be imported on Windows, so the HA-dependent tests under tests/ha/
+      # only run here. The ams/ client has no HA imports and runs everywhere.
+      - run: pip install -r requirements-test.txt
+      - run: pytest tests/ -v

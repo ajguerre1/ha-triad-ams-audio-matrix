@@ -1,0 +1,26 @@
+[tool.ruff]
+line-length = 100
+# Pinned to py313, NOT inferred. Home Assistant 2026.8 runs on Python 3.13, but the dev box
+# here has 3.14. If ruff inferred the target from the local interpreter it would start
+# rewriting to 3.14-only syntax, `ruff format --check` would pass in CI, and Home Assistant
+# would then fail to load the integration at runtime.
+target-version = "py313"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF"]
+ignore = ["B008"]  # Home Assistant config-flow style relies on calls in argument defaults
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["E402"]
+"scripts/*" = ["E402"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+# pytest-socket arrives with pytest-homeassistant-custom-component and blocks sockets for the
+# whole session in CI. Modules that drive the real client against the simulator opt back in
+# with this marker. It is registered here so those modules do not warn on the development box,
+# where pytest-socket is not installed at all.
+markers = [
+  "enable_socket: this module opens real loopback sockets against tests/simulator.py",
+]
