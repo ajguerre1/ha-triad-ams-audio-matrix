@@ -1,0 +1,12 @@
+# Everything in this repository is checked out and committed with LF.
+#
+# Development happens on Windows but CI, hassfest, the HACS action and Home Assistant itself all
+# run on Linux. Two of the checks are byte-exact and would fail on line endings alone: the
+# strings.json <-> translations/en.json `diff`, and `ruff format --check`. Normalising here means
+# the working copy matches what CI sees.
+* text=auto eol=lf
+
+# Binary assets must never be touched.
+*.png binary
+*.jpg binary
+*.ico binary
