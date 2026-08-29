@@ -25,6 +25,10 @@ pytestmark = pytest.mark.enable_socket
 
 ENTITY = "media_player.test_matrix_output_1"
 
+#: How long the simulated device answers a route read with the pre-write value.
+#: Real hardware measured under 25 ms; 50 ms here so the test does not sit on the edge.
+STALE_WINDOW = 0.05
+
 
 async def _settle(hass: HomeAssistant) -> None:
     """Let a Debouncer cooldown expire.
@@ -207,7 +211,7 @@ class TestRoutingIsCoalesced:
         Nothing raises, because a stale route is a perfectly plausible route. The only thing that
         distinguishes it is that it is not what was just written, so that is what this asserts.
         """
-        simulator.stale_reads_after_write = True
+        simulator.stale_read_window_seconds = STALE_WINDOW
         await _setup(hass, simulator)
 
         await _call(hass, SERVICE_SELECT_SOURCE, **{ATTR_INPUT_SOURCE: "Input 4"})
@@ -232,7 +236,7 @@ class TestRoutingIsCoalesced:
         # would fail because nothing was written -- not because something stale was read.
         await _settle(hass)
 
-        simulator.stale_reads_after_write = True
+        simulator.stale_read_window_seconds = STALE_WINDOW
         await _call(hass, SERVICE_TURN_OFF)
         await hass.async_block_till_done()
 

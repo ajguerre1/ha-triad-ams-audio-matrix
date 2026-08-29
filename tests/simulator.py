@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import asyncio
 import re
+import time
 from dataclasses import dataclass, field
 from enum import Enum
 
@@ -154,16 +155,24 @@ class AmsSimulator:
         #: value -- never a third one -- so it is the device settling, not another controller
         #: writing. It clears within ~20 ms.
         #:
-        #: Modelled as **one stale answer per write** rather than on a timer, deliberately. A
-        #: timer would let `asyncio.sleep()` count as a fix, and a sleep is a guess about a
-        #: device's internals that the next firmware is free to invalidate. Owing exactly one
-        #: stale answer forces the client to *verify* the read-back instead of waiting and hoping.
+        #: Modelled as a **time window**, and the first attempt at this file got that wrong.
+        #:
+        #: It originally owed exactly *one* stale answer per write, on the reasoning that a timer
+        #: would let `asyncio.sleep()` count as a fix. That reasoning was right about sleeps and
+        #: wrong about the device. A route read costs **0.3 ms**, so a retry loop with no spacing
+        #: issues all of its attempts inside a window that lasts up to **25 ms** and every one of
+        #: them comes back stale. Owing a single answer let that loop pass while the same code
+        #: still published the old source on real hardware -- measured after release.
+        #:
+        #: A window forces the retry to be *spaced* as well as verified, which is what the device
+        #: actually requires. Verification is still what stops the loop, so this does not reduce
+        #: to a blind sleep: the common case where the first read is already correct pays nothing.
         #:
         #: What made this worth reproducing: the value it returns is entirely plausible, so
         #: nothing raises. Home Assistant simply published the previous source and kept showing
         #: it until the next poll, up to 30 s later.
-        self.stale_reads_after_write = False
-        self._owed_stale_route: dict[int, int | None] = {}
+        self.stale_read_window_seconds = 0.0
+        self._stale_route_until: dict[int, tuple[float, int | None]] = {}
         #: Fail the next command whose hex starts with this prefix, then clear.
         #:
         #: ``fail_next`` always lands on whatever the client happens to send first, which for a
@@ -388,15 +397,22 @@ class AmsSimulator:
         if opcode == 0x1D:  # routing
             if query:
                 source_now = channel.source
-                if self.stale_reads_after_write and output in self._owed_stale_route:
-                    # One stale answer per write -- see `stale_reads_after_write`.
-                    source_now = self._owed_stale_route.pop(output)
+                pending = self._stale_route_until.get(output)
+                if pending is not None:
+                    until, previous = pending
+                    if time.monotonic() < until:
+                        source_now = previous  # still settling -- see stale_read_window_seconds
+                    else:
+                        del self._stale_route_until[output]
                 if source_now is None:
                     return f"Get Out[{output}] Input Source : Audio Off"
                 return f"Get Out[{output}] Input Source : input {source_now}"
             source = rest[1]
-            if self.stale_reads_after_write:
-                self._owed_stale_route[output] = channel.source
+            if self.stale_read_window_seconds:
+                self._stale_route_until[output] = (
+                    time.monotonic() + self.stale_read_window_seconds,
+                    channel.source,
+                )
             # An index one past the last input means disconnect; there is no disconnect opcode.
             channel.source = None if source >= self.state.inputs else source + 1
             return f"Set Out[{output}] Input Source"

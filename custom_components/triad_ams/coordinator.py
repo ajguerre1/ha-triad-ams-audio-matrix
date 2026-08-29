@@ -44,21 +44,29 @@ ROUTE_DEBOUNCE_SECONDS = 0.25
 #: Control4 driver's own 10 s, which exists so dragging a slider does not write fifty times.
 TURN_ON_VOLUME_DEBOUNCE_SECONDS = 10.0
 
-#: How many extra reads to spend confirming a routing write landed.
+#: How many extra reads to spend confirming a routing write landed, and how far apart.
 #:
 #: **The device answers a read issued straight after a write with the pre-write value.** Measured
 #: 2026-08-29 on a live AMS24: 6 of 8 route reads and 14 of 18 volume reads returned the previous
-#: value, always exactly the previous value and never a third one, clearing within ~20 ms.
+#: value, always exactly the previous value and never a third one.
 #:
 #: Routing is the path that was exposed, because ``_read_output`` reads the route *first* and so
 #: issues it with no intervening round trip. Volume escapes only because that same ordering
-#: spends a round trip on the route before reading it -- an accident, not a guarantee.
+#: spends a read on the route before reading it -- an accident, not a guarantee.
 #:
-#: Retrying rather than sleeping is deliberate. A sleep is a guess about the device's internals
-#: that the next firmware is free to invalidate, and it would pay its cost on every write instead
-#: of only the ones that need it. Two extra reads is ample: the race clears in well under one
-#: round trip, and the simulator owes exactly one stale answer per write.
-ROUTE_READ_BACK_RETRIES: Final = 2
+#: **The delay is the part that matters, and the first version of this shipped without it.** The
+#: reasoning was that retrying beats sleeping, because a sleep is a guess about the device's
+#: internals that the next firmware is free to invalidate. That is still true, and it is still
+#: why verification is what stops this loop rather than a fixed wait -- a first read that is
+#: already correct costs nothing. But retries with no spacing are not verification of anything:
+#: a route read costs **0.3 ms**, so three back-to-back attempts all land inside a window that
+#: lasts up to **25 ms** and every one returns the same stale answer. That version passed its
+#: tests and still published the old source on real hardware.
+#:
+#: 30 ms clears the measured window on the first retry, and four attempts span 120 ms for a
+#: device having a slower day.
+ROUTE_READ_BACK_RETRIES: Final = 4
+ROUTE_READ_BACK_DELAY_SECONDS: Final = 0.03
 
 
 class _Unset:
@@ -649,6 +657,10 @@ class TriadCoordinator(DataUpdateCoordinator[MatrixSnapshot]):
                     # Not an error, and not worth raising over: the device is entitled to refuse
                     # a route, and after the retries whatever it reports is published as the
                     # truth. This only stops a *pre-write* answer being mistaken for that truth.
+                    #
+                    # Spaced, because reads are far cheaper than the settle. Without the sleep all
+                    # of these land inside the same stale window and agree with each other.
+                    await asyncio.sleep(ROUTE_READ_BACK_DELAY_SECONDS)
                     snapshot = await self._read_output(output)
         except (CommandError, ParseError, TransportError) as err:
             # Not fatal: the scheduled poll will pick this up. Failing here would surface a
