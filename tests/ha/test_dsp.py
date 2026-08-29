@@ -305,3 +305,28 @@ class TestMaxVolumeReachesTheDevice:
 
         assert simulator.state.channels[1].max_step == 40
         assert simulator.state.channels[2].max_step == 100, "an unchanged cap was written anyway"
+
+    async def test_the_delay_is_not_re_read_on_every_poll(
+        self, hass: HomeAssistant, simulator: AmsSimulator
+    ) -> None:
+        """Configuration, not state -- the same reasoning that keeps firmware cached.
+
+        Nothing changes this but the integration itself, and a write refreshes it explicitly. Left
+        in the poll it costs a round trip per matrix per cycle, forever, for a value that does not
+        move. The enable flag beside it *is* still polled, because entity availability and the
+        repair issue both hang on it being current.
+        """
+        entry = await _setup(hass, simulator, enable=[OFF_DELAY])
+        delay_reads = lambda: sum(  # noqa: E731
+            1 for f in simulator.received if f.startswith("ff55040aa3f5")
+        )
+        before = delay_reads()
+        await entry.runtime_data.async_refresh()
+        await hass.async_block_till_done()
+        assert delay_reads() == before, "the off delay was re-read on a later poll"
+
+        enable_reads = sum(1 for f in simulator.received if f.startswith("ff55040aa2f5"))
+        await entry.runtime_data.async_refresh()
+        await hass.async_block_till_done()
+        after_enable = sum(1 for f in simulator.received if f.startswith("ff55040aa2f5"))
+        assert after_enable > enable_reads, "the enable flag stopped being polled"

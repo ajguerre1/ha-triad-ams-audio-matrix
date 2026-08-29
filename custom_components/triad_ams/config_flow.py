@@ -257,6 +257,16 @@ class TriadOptionsFlow(OptionsFlow):
         """
         entry = self.config_entry
         if not hasattr(entry, "runtime_data"):
+            # Reachable: a matrix that was unreachable at startup leaves its entry unloaded, and
+            # the options flow still opens. Saying so matters more here than almost anywhere else,
+            # because the register cannot be read back -- so nothing downstream will ever notice
+            # that the device is enforcing a different ceiling than the one shown in the UI.
+            _LOGGER.warning(
+                "%s is not loaded, so the volume caps were saved but not sent to the matrix. "
+                "They will apply to Home Assistant immediately; re-save them once the matrix is "
+                "reachable to enforce them on the device itself.",
+                entry.title,
+            )
             return
         client = entry.runtime_data.client
         for key, value in new.items():

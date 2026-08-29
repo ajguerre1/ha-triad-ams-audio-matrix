@@ -10,6 +10,7 @@ import asyncio
 import contextlib
 
 import pytest
+from ams import protocol as p
 from ams.client import AmsClient
 from ams.errors import CommandError, ParseError, TransportError, TriadError
 from ams.model import MatrixSpec
@@ -265,6 +266,21 @@ class TestBurstyWrites:
             assert await client.get_audio_sense_enabled() is True
             await client.set_audio_sense_enabled(enabled=False)
             assert await client.get_audio_sense_enabled() is False
+            await client.disconnect()
+
+    async def test_the_drain_reports_how_much_it_swallowed(self) -> None:
+        """The byte count is the only external evidence the drain consumed the whole burst.
+
+        Unasserted, a ``send_bursty`` that read a single frame and returned would pass every other
+        test in this class -- the surplus would sit in the buffer and only desynchronise a
+        *later* exchange, which is precisely how C-09 hid on real hardware.
+        """
+        async with AmsSimulator(inputs=8) as sim:
+            client = await _client(sim)
+            drained = await client.send_bursty(p.set_audio_sense_enabled(enabled=True))
+            # Eight frames of "AudioSense:Input[n]: 0" plus terminators. A drain that stopped at
+            # the first frame returns about an eighth of this.
+            assert drained > 100, f"only {drained} bytes drained -- the burst was not consumed"
             await client.disconnect()
 
     async def test_the_drain_ends_on_a_quiet_socket_not_on_an_expected_frame_count(self) -> None:

@@ -412,23 +412,36 @@ class TriadCoordinator(DataUpdateCoordinator[MatrixSnapshot]):
             _LOGGER.debug("%s: addressing mode did not answer cleanly: %s", self.name, err)
         return firmware, ip_mode
 
-    async def _read_sense_settings(self) -> tuple[bool | None, int | None]:
-        """The matrix-wide audio-sense settings: whether it measures, and the sleep timeout."""
+    async def _read_sense_settings(self, *, force: bool = False) -> tuple[bool | None, int | None]:
+        """The matrix-wide audio-sense settings: whether it measures, and the sleep timeout.
+
+        **The enable flag is polled; the off delay is cached.** They look alike and are not. The
+        flag is what every audio-sense entity's availability hangs on, and it is what the repair
+        issue keys off, so a stale one shows the wrong thing. The delay is configuration -- nothing
+        changes it but this integration, and a write refreshes it explicitly through ``force`` --
+        so re-reading it every cycle spends a round trip per matrix on a value that does not move.
+        That is the same reasoning that keeps the firmware version cached.
+        """
+        previous = self.data
         if not self.polls_audio_sense_settings:
-            previous = self.data
             return (
                 previous.audio_sense_enabled if previous else None,
                 previous.audio_sense_off_delay if previous else None,
             )
-        enabled = delay = None
+        enabled = None
         try:
             enabled = await self.client.get_audio_sense_enabled()
         except (CommandError, ParseError) as err:
             _LOGGER.debug("%s: could not read audio-sense enable: %s", self.name, err)
-        try:
-            delay = await self.client.get_audio_sense_off_delay()
-        except (CommandError, ParseError) as err:
-            _LOGGER.debug("%s: could not read audio-sense off delay: %s", self.name, err)
+
+        delay = None if force or previous is None else previous.audio_sense_off_delay
+        if delay is None:
+            # None also covers "the last read failed", so a transient failure retries next cycle
+            # rather than caching the absence of a value forever.
+            try:
+                delay = await self.client.get_audio_sense_off_delay()
+            except (CommandError, ParseError) as err:
+                _LOGGER.debug("%s: could not read audio-sense off delay: %s", self.name, err)
         return enabled, delay
 
     async def _read_audio_sense(self) -> dict[int, bool | None]:
@@ -458,7 +471,8 @@ class TriadCoordinator(DataUpdateCoordinator[MatrixSnapshot]):
         if current is None:
             return
         try:
-            enabled, delay = await self._read_sense_settings()
+            # force: this runs after a write, which is the one moment the cached delay is stale.
+            enabled, delay = await self._read_sense_settings(force=True)
         except TransportError as err:
             _LOGGER.debug("could not re-read audio-sense settings: %s", err)
             return
@@ -610,8 +624,13 @@ class TriadCoordinator(DataUpdateCoordinator[MatrixSnapshot]):
         await super().async_shutdown()
         # A pending route would otherwise fire against a client that is about to be closed, or
         # after a reload has replaced this coordinator -- writing a stale routing to the device.
+        # `async_shutdown`, not `async_cancel`. Cancelling stops the timer but leaves the
+        # Debouncer holding its function -- a closure over this coordinator, and through it the
+        # client and its socket. Home Assistant added shutdown precisely to release that
+        # (core#137237). This integration reloads on every options change, so cancelling alone
+        # would leave a coordinator reachable for each edit the owner ever makes.
         for debouncer in (*self._route_debouncers.values(), *self._turn_on_debouncers.values()):
-            debouncer.async_cancel()
+            debouncer.async_shutdown()
         self._route_debouncers.clear()
         self._pending_routes.clear()
         self._turn_on_debouncers.clear()
