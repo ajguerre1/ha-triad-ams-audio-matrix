@@ -12,7 +12,9 @@ from tests.simulator import AmsSimulator
 pytestmark = pytest.mark.enable_socket
 
 FIRMWARE = "sensor.test_matrix_firmware"
-DELAY = "sensor.test_matrix_audio_sense_off_delay"
+ADDRESSING = "sensor.test_matrix_addressing"
+#: FR-14 made the off delay settable, so the read-only sensor became a `number`.
+DELAY = "number.test_matrix_audio_sense_off_delay"
 
 
 async def _setup(hass: HomeAssistant, sim: AmsSimulator, *, enable: list[str] | None = None):
@@ -51,6 +53,19 @@ async def test_the_off_delay_is_reported_in_minutes(
     state = hass.states.get(DELAY)
     assert state.state == "1"
     assert state.attributes["unit_of_measurement"] == "min"
+
+
+async def test_the_addressing_mode_is_reported(
+    hass: HomeAssistant, simulator: AmsSimulator
+) -> None:
+    """FR-17, renamed on measurement.
+
+    The Control4 driver calls this command ``getIpAddress``, but both real units answer the
+    literal ``dynamic_ip`` -- the addressing mode, with no address in it. The entity is named for
+    what the hardware returns rather than for the driver's constant.
+    """
+    await _setup(hass, simulator, enable=[ADDRESSING])
+    assert hass.states.get(ADDRESSING).state == "dhcp"
 
 
 async def test_firmware_is_not_re_read_on_every_poll(

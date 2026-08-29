@@ -14,7 +14,9 @@ pytestmark = pytest.mark.enable_socket
 
 SENSE_1 = "binary_sensor.test_matrix_input_1_audio"
 SENSE_3 = "binary_sensor.test_matrix_input_3_audio"
-ENABLED = "binary_sensor.test_matrix_audio_sense_enabled"
+#: FR-14 replaced the read-only `binary_sensor.…audio_sense_enabled` with a switch that reports
+#: the same state and can change it. Keeping both would have put one value in two entities.
+ENABLED = "switch.test_matrix_audio_sense"
 
 
 async def _setup(hass: HomeAssistant, sim: AmsSimulator, *, enable: list[str] | None = None):

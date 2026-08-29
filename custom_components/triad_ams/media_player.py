@@ -137,7 +137,7 @@ class TriadOutputMediaPlayer(TriadOutputEntity, MediaPlayerEntity):
             return
         for number, name in self._sources.items():
             if name == source:
-                await self.coordinator.async_set_route(self._output, number)
+                await self._route(number)
                 self._last_source = number
                 return
         msg = f"{source!r} is not one of this matrix's inputs"
@@ -154,7 +154,7 @@ class TriadOutputMediaPlayer(TriadOutputEntity, MediaPlayerEntity):
         if target is None:
             msg = "no inputs are enabled for this matrix"
             raise HomeAssistantError(msg)
-        await self.coordinator.async_set_route(self._output, target)
+        await self._route(target)
 
     async def async_turn_off(self) -> None:
         """Disconnect the output. This is routing, not mains power.
@@ -165,7 +165,15 @@ class TriadOutputMediaPlayer(TriadOutputEntity, MediaPlayerEntity):
         """
         if (snapshot := self.snapshot) is not None and snapshot.source is not None:
             self._last_source = snapshot.source
-        await self.coordinator.async_set_route(self._output, None)
+        await self._route(None)
+
+    async def _route(self, source: int | None) -> None:
+        """Route through the coordinator, which coalesces repeats. ``None`` disconnects."""
+        try:
+            await self.coordinator.async_set_route(self._output, source)
+        except TriadError as err:
+            msg = f"command failed for output {self._output}: {err}"
+            raise HomeAssistantError(msg) from err
 
     async def async_set_volume_level(self, volume: float) -> None:
         step = round(max(0.0, min(volume, 1.0)) * MAX_STEP)

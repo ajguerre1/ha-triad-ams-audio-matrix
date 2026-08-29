@@ -283,6 +283,10 @@ class AmsSimulator:
             return f"Fw version : {self.state.firmware}"
         if group == 0x08 and opcode == 0x80:
             return f"Get MAC Add {SIMULATOR_MAC}"
+        if group == 0x08 and opcode == 0x81:
+            # Measured 2026-08-29 on both real matrices: a bare token, no address in it, despite
+            # the driver calling this command `getIpAddress`.
+            return "dynamic_ip"
         if group == 0x01 and opcode == 0x01:
             return "Get Power status : Working"
 

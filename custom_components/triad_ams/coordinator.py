@@ -531,10 +531,13 @@ class TriadCoordinator(DataUpdateCoordinator[MatrixSnapshot]):
         pre-write state -- an ordering inversion that is silent, because the value it returns is
         entirely plausible, just stale.
 
-        **Errors reach the log, not the caller.** A debounced write happens after the service call
-        has returned, so a failure cannot be raised at whoever asked for it. This is inherent to
-        coalescing rather than a shortcut: what the user sees instead is the zone's source staying
-        where it was, because the re-read reports what the device actually did.
+        **Leading, not trailing** (``immediate=True``). Control4 debounces on the trailing edge
+        because its UI streams a route command per scroll step; Home Assistant's ``select_source``
+        is a discrete choice, so waiting 250 ms before acting on it would make a synchronous
+        operation asynchronous for no benefit -- and a caller that checked the state straight
+        afterwards would read the old source. Leading gives the normal case an immediate write
+        whose failure still raises at whoever asked, while a runaway automation is still coalesced
+        into one trailing run.
         """
         self._pending_routes[output] = source
         await self._route_debouncer(output).async_call()
@@ -550,26 +553,31 @@ class TriadCoordinator(DataUpdateCoordinator[MatrixSnapshot]):
             self.hass,
             _LOGGER,
             cooldown=ROUTE_DEBOUNCE_SECONDS,
-            immediate=False,
+            # Leading edge: the first call is awaited and its errors propagate. Only the coalesced
+            # trailing run logs instead of raising, which is the right way round -- the trailing
+            # run has no caller left to raise at.
+            immediate=True,
             function=_apply,
         )
         self._route_debouncers[output] = debouncer
         return debouncer
 
     async def _apply_pending_route(self, output: int) -> None:
+        """Send the routing this output is waiting on.
+
+        Deliberately does not catch: on the leading edge the caller is still waiting and should
+        see the failure. On a coalesced trailing run there is no caller left, and Home Assistant's
+        own ``Debouncer`` logs the exception rather than letting it escape.
+        """
         # Membership, not a None check: None is a real pending value meaning "disconnect", and
         # treating it as "nothing pending" would silently drop every turn-off.
         if output not in self._pending_routes:
             return
         source = self._pending_routes.pop(output)
-        try:
-            if source is None:
-                await self.client.disconnect_output(output)
-            else:
-                await self.client.set_route(output, source)
-        except (CommandError, ParseError, TransportError) as err:
-            _LOGGER.error("could not route output %s to %s: %s", output, source, err)
-            return
+        if source is None:
+            await self.client.disconnect_output(output)
+        else:
+            await self.client.set_route(output, source)
         await self.async_refresh_output(output)
 
     async def async_refresh_output(self, output: int) -> None:
