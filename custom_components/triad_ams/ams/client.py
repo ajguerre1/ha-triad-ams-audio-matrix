@@ -26,6 +26,7 @@ from typing import Final
 
 from . import protocol as p
 from .errors import CommandError, ParseError, TransportError
+from .model import MODELS, MatrixSpec
 from .volume import step_for_db
 
 _LOGGER = logging.getLogger(__name__)
@@ -47,18 +48,12 @@ CLEAN_EXCHANGES_TO_TRUST: Final = 3
 class AmsClient:
     """Talks to one matrix. Connects lazily and reconnects on transport failure."""
 
-    def __init__(
-        self,
-        host: str,
-        port: int = 52000,
-        *,
-        output_count: int = 24,
-        input_count: int = 24,
-    ) -> None:
+    def __init__(self, host: str, port: int = 52000, *, spec: MatrixSpec | None = None) -> None:
         self.host = host
         self.port = port
-        self.output_count = output_count
-        self.input_count = input_count
+        # Defaults to the largest model so a probe before the model is known still validates
+        # sanely; setup replaces it with the configured spec.
+        self.spec = spec or MODELS["AMS24"]
 
         self._reader: asyncio.StreamReader | None = None
         self._writer: asyncio.StreamWriter | None = None
@@ -216,44 +211,44 @@ class AmsClient:
         return p.parse_power(await self._exchange(p.query_power()))
 
     async def get_route(self, output: int) -> int | None:
-        text = await self._exchange(p.query_route(output, output_count=self.output_count))
+        text = await self._exchange(p.query_route(self.spec, output))
         index, source = p.parse_output_route(text)
         self._verify(index, output, "route")
         return source
 
     async def get_volume_step(self, output: int) -> int:
         """Return 0..100. The device answers in decibels; the taper converts."""
-        text = await self._exchange(p.query_output_volume(output, output_count=self.output_count))
+        text = await self._exchange(p.query_output_volume(self.spec, output))
         index, db = p.parse_output_volume(text)
         self._verify(index, output, "volume")
         return step_for_db(db)
 
     async def get_mute(self, output: int) -> bool:
-        text = await self._exchange(p.query_output_mute(output, output_count=self.output_count))
+        text = await self._exchange(p.query_output_mute(self.spec, output))
         index, muted = p.parse_output_mute(text)
         self._verify(index, output, "mute")
         return muted
 
     async def get_bass(self, output: int) -> float:
-        text = await self._exchange(p.query_output_bass(output, output_count=self.output_count))
+        text = await self._exchange(p.query_output_bass(self.spec, output))
         index, value = p.parse_output_bass(text)
         self._verify(index, output, "bass")
         return value
 
     async def get_treble(self, output: int) -> float:
-        text = await self._exchange(p.query_output_treble(output, output_count=self.output_count))
+        text = await self._exchange(p.query_output_treble(self.spec, output))
         index, value = p.parse_output_treble(text)
         self._verify(index, output, "treble")
         return value
 
     async def get_loudness(self, output: int) -> bool:
-        text = await self._exchange(p.query_output_loudness(output, output_count=self.output_count))
+        text = await self._exchange(p.query_output_loudness(self.spec, output))
         index, value = p.parse_output_loudness(text)
         self._verify(index, output, "loudness")
         return value
 
     async def get_mono(self, output: int) -> bool:
-        text = await self._exchange(p.query_output_mono(output, output_count=self.output_count))
+        text = await self._exchange(p.query_output_mono(self.spec, output))
         index, value = p.parse_output_mono(text)
         self._verify(index, output, "stereo/mono")
         return value
@@ -273,31 +268,25 @@ class AmsClient:
     # -- writes -------------------------------------------------------------------------------
 
     async def set_route(self, output: int, source: int) -> None:
-        await self._write(
-            p.set_route(
-                output, source, output_count=self.output_count, input_count=self.input_count
-            )
-        )
+        await self._write(p.set_route(self.spec, output, source))
 
     async def disconnect_output(self, output: int) -> None:
-        await self._write(
-            p.disconnect_output(output, self.input_count, output_count=self.output_count)
-        )
+        await self._write(p.disconnect_output(self.spec, output))
 
     async def set_volume_step(self, output: int, step: int) -> None:
-        await self._write(p.set_output_volume(output, step, output_count=self.output_count))
+        await self._write(p.set_output_volume(self.spec, output, step))
 
     async def set_mute(self, output: int, *, mute: bool) -> None:
-        await self._write(p.set_output_mute(output, mute=mute, output_count=self.output_count))
+        await self._write(p.set_output_mute(self.spec, output, mute=mute))
 
     async def set_bass(self, output: int, db: float) -> None:
-        await self._write(p.set_output_bass(output, db, output_count=self.output_count))
+        await self._write(p.set_output_bass(self.spec, output, db))
 
     async def set_treble(self, output: int, db: float) -> None:
-        await self._write(p.set_output_treble(output, db, output_count=self.output_count))
+        await self._write(p.set_output_treble(self.spec, output, db))
 
     async def set_loudness(self, output: int, *, on: bool) -> None:
-        await self._write(p.set_output_loudness(output, on=on, output_count=self.output_count))
+        await self._write(p.set_output_loudness(self.spec, output, on=on))
 
     async def set_mono(self, output: int, *, mono: bool) -> None:
-        await self._write(p.set_output_mono(output, mono=mono, output_count=self.output_count))
+        await self._write(p.set_output_mono(self.spec, output, mono=mono))

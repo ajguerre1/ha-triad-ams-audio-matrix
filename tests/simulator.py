@@ -19,6 +19,7 @@ No site data: the invented MAC is AA:BB:CC:DD:EE:FF and it listens on loopback.
 from __future__ import annotations
 
 import asyncio
+import re
 from dataclasses import dataclass, field
 from enum import Enum
 
@@ -40,6 +41,9 @@ class Fault(Enum):
 
     COMMAND_ERROR = "command_error"
     EMPTY = "empty"
+    #: Answer correctly but name a different output. This is what a desynchronised stream looks
+    #: like from the client's side: a well-formed, parseable response about the wrong zone.
+    WRONG_OUTPUT = "wrong_output"
 
 
 @dataclass
@@ -55,6 +59,7 @@ class OutputState:
 
 @dataclass
 class MatrixState:
+    model: str = "AMS8"
     outputs: int = 8
     inputs: int = 8
     firmware: str = "V1.05.74"
@@ -76,7 +81,9 @@ class AmsSimulator:
         padding: Padding = Padding.SINGLE,
         firmware: str = "V1.05.74",
     ) -> None:
-        self.state = MatrixState(outputs=outputs, inputs=inputs, firmware=firmware)
+        self.state = MatrixState(
+            model=f"AMS{outputs}", outputs=outputs, inputs=inputs, firmware=firmware
+        )
         self.padding = padding
         self.fail_next: Fault | None = None
         #: Every command received, as hex. Lets a test assert what went on the wire.
@@ -115,6 +122,22 @@ class AmsSimulator:
 
     async def __aexit__(self, *_: object) -> None:
         await self.stop()
+
+    @property
+    def write_commands(self) -> list[str]:
+        """Received commands that would CHANGE the device, as hex.
+
+        A query carries the 0xF5 marker; anything in the output (0x03) or input (0x02) groups
+        without it is a set. Lets a test assert that setup only ever reads -- which is design
+        decision D-05, and the difference between coexisting with another controller and
+        overwriting whatever it just did.
+        """
+        writes = []
+        for frame in self.received:
+            payload = bytes.fromhex(frame)[3:]
+            if payload[:1] in (b"", b"") and 0xF5 not in payload:
+                writes.append(frame)
+        return writes
 
     @property
     def port(self) -> int:
@@ -165,13 +188,18 @@ class AmsSimulator:
             writer.close()
 
     def _respond(self, payload: bytes) -> str:
-        if self.fail_next is not None:
-            fault, self.fail_next = self.fail_next, None
-            return "" if fault is Fault.EMPTY else "Command error"
+        fault, self.fail_next = self.fail_next, None
+        if fault is Fault.EMPTY:
+            return ""
+        if fault is Fault.COMMAND_ERROR:
+            return "Command error"
         try:
-            return self._dispatch(payload)
+            answer = self._dispatch(payload)
         except (IndexError, KeyError, ValueError):
             return "Command error"
+        if fault is Fault.WRONG_OUTPUT:
+            answer = _rename_output(answer)
+        return answer
 
     def _dispatch(self, payload: bytes) -> str:
         group, opcode = payload[0], payload[1]
@@ -270,3 +298,11 @@ def _db_for(step: int) -> str:
     # ams/volume.py, and duplicating it here would let a bug in it agree with itself.
     value = _DB_POINTS[step] if step < len(_DB_POINTS) else round(-45.0 + (step - 19) * 0.5625, 1)
     return f"{value:g}"
+
+
+def _rename_output(answer: str) -> str:
+    """Shift the output index a response names, leaving everything else intact.
+
+    Produces the shape a frame-boundary slip produces: valid text, correct format, wrong zone.
+    """
+    return re.sub(r"Out\[(\d+)\]", lambda m: f"Out[{int(m.group(1)) + 1}]", answer, count=1)

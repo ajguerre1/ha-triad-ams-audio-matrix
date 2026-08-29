@@ -22,6 +22,7 @@ from homeassistant.helpers.selector import selector
 
 from .ams.client import AmsClient
 from .ams.errors import TriadError
+from .ams.model import MODELS
 from .const import (
     CONF_ACTIVE_INPUTS,
     CONF_ACTIVE_OUTPUTS,
@@ -38,7 +39,6 @@ from .const import (
     DEFAULT_SCAN_INTERVAL,
     DOMAIN,
     MAX_VOLUME_PERCENT,
-    MODELS,
 )
 
 
@@ -100,7 +100,8 @@ class TriadConfigFlow(ConfigFlow, domain=DOMAIN):
             except TriadError:
                 errors["base"] = "cannot_connect"
             else:
-                outputs, inputs = MODELS[model]
+                spec = MODELS[model]
+                outputs, inputs = spec.outputs, spec.inputs
                 self._data = {
                     CONF_NAME: user_input.get(CONF_NAME) or DEFAULT_NAME,
                     CONF_HOST: host,

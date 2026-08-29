@@ -15,14 +15,10 @@ from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from . import TriadConfigEntry, _active_outputs, _channel_counts
+from . import TriadConfigEntry
 from .ams.errors import TriadError
+from .ams.settings import EntrySettings
 from .ams.volume import MAX_STEP
-from .const import (
-    CONF_ACTIVE_INPUTS,
-    CONF_OUTPUT_MAX_VOLUMES,
-    MAX_VOLUME_PERCENT,
-)
 from .coordinator import TriadCoordinator
 from .entity import TriadOutputEntity
 
@@ -39,11 +35,8 @@ async def async_setup_entry(
 ) -> None:
     """Create one entity per active output."""
     coordinator = entry.runtime_data
-    output_count, input_count = _channel_counts(entry)
-
-    active_inputs = entry.options.get(CONF_ACTIVE_INPUTS) or list(range(1, input_count + 1))
-    sources = {int(i): f"Input {int(i)}" for i in active_inputs if 1 <= int(i) <= input_count}
-    caps = entry.options.get(CONF_OUTPUT_MAX_VOLUMES) or {}
+    settings = EntrySettings.resolve(entry.data, entry.options)
+    sources = {number: f"Input {number}" for number in settings.active_inputs}
 
     async_add_entities(
         TriadOutputMediaPlayer(
@@ -51,9 +44,9 @@ async def async_setup_entry(
             entry,
             output,
             sources=sources,
-            max_volume_percent=int(caps.get(str(output), caps.get(output, MAX_VOLUME_PERCENT))),
+            max_volume_percent=settings.max_volume(output),
         )
-        for output in _active_outputs(entry, output_count)
+        for output in settings.active_outputs
     )
 
 
@@ -77,12 +70,12 @@ class TriadOutputMediaPlayer(TriadOutputEntity, MediaPlayerEntity):
         output: int,
         *,
         sources: dict[int, str],
-        max_volume_percent: int = MAX_VOLUME_PERCENT,
+        max_volume_percent: int = MAX_STEP,
     ) -> None:
         super().__init__(coordinator, entry, output)
         self._attr_name = f"Output {output}"
         self._sources = sources
-        self._max_step = max(1, min(max_volume_percent, MAX_VOLUME_PERCENT))
+        self._max_step = max(1, min(max_volume_percent, MAX_STEP))
         # Remembered so turning the zone back on restores what it was listening to. The device
         # cannot answer this: an unrouted output reports 'Audio Off' and nothing more.
         self._last_source: int | None = None

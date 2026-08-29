@@ -4,11 +4,13 @@ Pure functions only -- no sockets, no state, no Home Assistant. Everything here 
 ``docs/triad-ams-protocol.md``, and every parser is pinned by a test quoting a response captured
 from real hardware.
 
-Two conventions run through the whole module:
+Three conventions run through the module:
 
+* **Builders take a** :class:`~ams.model.MatrixSpec`. It carries the channel counts and the
+  indices derived from them, so range checking happens in one place instead of in every function.
 * **Callers speak 1-based indices.** The device takes them 0-based on the wire and prints them
   1-based in responses, so 1-based is the only base that is consistent at the boundary. The
-  conversion happens here and nowhere else.
+  conversion happens in the spec and nowhere else.
 * **Audio sense is the exception.** It prints 0-based. ``parse_audio_sense`` converts, so callers
   still see 1-based.
 """
@@ -19,13 +21,11 @@ import re
 from typing import Final
 
 from .errors import CommandError, ParseError
+from .model import MatrixSpec
+from .volume import MAX_STEP, MIN_STEP
 
 #: Every frame the device sends ends with at least one of these.
 FRAME_TERMINATOR: Final = b"\x00"
-
-#: Volume, max volume and turn-on volume all take a step in this range.
-MIN_STEP: Final = 0x00
-MAX_STEP: Final = 0x64
 
 #: Bass, treble, balance and EQ gain encode -12..+12 dB in half-steps around this centre.
 _TONE_CENTRE: Final = 0x18
@@ -34,21 +34,14 @@ _EQ_FREQUENCY_BASE: Final = 0x20
 _EQ_GAIN_BASE: Final = 0x25
 _EQ_Q_BASE: Final = 0x2A
 
-#: Groups are lettered A..G on the wire index 0..6.
+#: Groups are lettered A..G on the wire index 0..6. Implemented for completeness; no hardware
+#: seen so far uses them -- see the design doc's note on FR-07.
 GROUP_LETTERS: Final = "ABCDEFG"
 
 
 # --------------------------------------------------------------------------------------------
-# Guards
+# Value guards that are not the spec's business
 # --------------------------------------------------------------------------------------------
-
-
-def _channel_byte(index: int, count: int, what: str) -> int:
-    """Validate a 1-based channel and return its 0-based wire byte."""
-    if not 1 <= index <= count:
-        msg = f"{what} {index} outside 1..{count}"
-        raise ValueError(msg)
-    return index - 1
 
 
 def _step_byte(step: int) -> int:
@@ -83,222 +76,224 @@ def _frame(payload: bytes) -> bytes:
     return b"\xff\x55" + bytes([len(payload)]) + payload
 
 
-def set_route(output: int, source: int, *, output_count: int = 24, input_count: int = 24) -> bytes:
+def _out(spec: MatrixSpec, opcode: int, output: int, *tail: int) -> bytes:
+    """A set command addressing one output."""
+    return _frame(bytes([0x03, opcode, spec.output_byte(output), *tail]))
+
+
+def _query_out(spec: MatrixSpec, opcode: int, output: int) -> bytes:
+    """A query addressing one output. The F5 marker sits before the index."""
+    return _frame(bytes([0x03, opcode, 0xF5, spec.output_byte(output)]))
+
+
+# -- routing -----------------------------------------------------------------------------------
+
+
+def set_route(spec: MatrixSpec, output: int, source: int) -> bytes:
     """Route ``output`` to ``source``, both 1-based."""
-    out = _channel_byte(output, output_count, "output")
-    src = _channel_byte(source, input_count, "input")
-    return _frame(bytes([0x03, 0x1D, out, src]))
+    return _out(spec, 0x1D, output, spec.input_byte(source))
 
 
-def disconnect_output(output: int, input_count: int, *, output_count: int = 24) -> bytes:
-    """Silence ``output``.
-
-    There is no disconnect opcode. The device treats an input index one past the last valid one
-    as 'no source', which is why ``input_count`` -- not ``input_count - 1`` -- is sent.
-    """
-    out = _channel_byte(output, output_count, "output")
-    return _frame(bytes([0x03, 0x1D, out, input_count]))
+def disconnect_output(spec: MatrixSpec, output: int) -> bytes:
+    """Silence ``output`` by routing it one past the last input."""
+    return _out(spec, 0x1D, output, spec.disconnect_source)
 
 
-def query_route(output: int, *, output_count: int = 24) -> bytes:
-    return _frame(bytes([0x03, 0x1D, 0xF5, _channel_byte(output, output_count, "output")]))
+def query_route(spec: MatrixSpec, output: int) -> bytes:
+    return _query_out(spec, 0x1D, output)
 
 
-def set_output_volume(output: int, step: int, *, output_count: int = 24) -> bytes:
-    out = _channel_byte(output, output_count, "output")
-    return _frame(bytes([0x03, 0x1E, out, _step_byte(step)]))
+# -- volume ------------------------------------------------------------------------------------
 
 
-def query_output_volume(output: int, *, output_count: int = 24) -> bytes:
-    return _frame(bytes([0x03, 0x1E, 0xF5, _channel_byte(output, output_count, "output")]))
+def set_output_volume(spec: MatrixSpec, output: int, step: int) -> bytes:
+    return _out(spec, 0x1E, output, _step_byte(step))
 
 
-def set_output_max_volume(output: int, step: int, *, output_count: int = 24) -> bytes:
-    out = _channel_byte(output, output_count, "output")
-    return _frame(bytes([0x03, 0x1F, out, _step_byte(step)]))
+def query_output_volume(spec: MatrixSpec, output: int) -> bytes:
+    return _query_out(spec, 0x1E, output)
 
 
-def set_output_turn_on_volume(output: int, step: int, *, output_count: int = 24) -> bytes:
-    out = _channel_byte(output, output_count, "output")
-    return _frame(bytes([0x03, 0x33, out, _step_byte(step)]))
+def set_output_max_volume(spec: MatrixSpec, output: int, step: int) -> bytes:
+    return _out(spec, 0x1F, output, _step_byte(step))
 
 
-def query_output_turn_on_volume(output: int, *, output_count: int = 24) -> bytes:
-    return _frame(bytes([0x03, 0x33, 0xF5, _channel_byte(output, output_count, "output")]))
+def set_output_turn_on_volume(spec: MatrixSpec, output: int, step: int) -> bytes:
+    return _out(spec, 0x33, output, _step_byte(step))
 
 
-def step_output_volume(
-    output: int, *, up: bool, large: bool = False, output_count: int = 24
-) -> bytes:
+def query_output_turn_on_volume(spec: MatrixSpec, output: int) -> bytes:
+    return _query_out(spec, 0x33, output)
+
+
+def step_output_volume(spec: MatrixSpec, output: int, *, up: bool, large: bool = False) -> bytes:
     """Nudge the volume. ``large`` is the device's 3 dB step."""
     opcode = {(True, False): 0x13, (False, False): 0x14, (True, True): 0x15, (False, True): 0x16}[
         (up, large)
     ]
-    return _frame(bytes([0x03, opcode, _channel_byte(output, output_count, "output")]))
+    return _frame(bytes([0x03, opcode, spec.output_byte(output)]))
 
 
-def set_output_mute(output: int, *, mute: bool, output_count: int = 24) -> bytes:
-    opcode = 0x17 if mute else 0x18
-    return _frame(bytes([0x03, opcode, _channel_byte(output, output_count, "output")]))
+# -- mute --------------------------------------------------------------------------------------
 
 
-def query_output_mute(output: int, *, output_count: int = 24) -> bytes:
-    """Note the 0x04 length byte.
+def set_output_mute(spec: MatrixSpec, output: int, *, mute: bool) -> bytes:
+    return _frame(bytes([0x03, 0x17 if mute else 0x18, spec.output_byte(output)]))
+
+
+def query_output_mute(spec: MatrixSpec, output: int) -> bytes:
+    """Note the 0x04 length byte that ``_query_out`` produces.
 
     The Control4 driver's ``getOutputMutePrefix`` constant declares 0x03 here and the device
     answers 'Command error'. The driver's own diagnostics routine uses 0x04, which works.
     """
-    return _frame(bytes([0x03, 0x17, 0xF5, _channel_byte(output, output_count, "output")]))
+    return _query_out(spec, 0x17, output)
 
 
-def set_output_bass(output: int, db: float, *, output_count: int = 24) -> bytes:
-    out = _channel_byte(output, output_count, "output")
-    return _frame(bytes([0x03, 0x2F, out, _tone_byte(db)]))
+# -- tone and DSP ------------------------------------------------------------------------------
 
 
-def query_output_bass(output: int, *, output_count: int = 24) -> bytes:
-    return _frame(bytes([0x03, 0x2F, 0xF5, _channel_byte(output, output_count, "output")]))
+def set_output_bass(spec: MatrixSpec, output: int, db: float) -> bytes:
+    return _out(spec, 0x2F, output, _tone_byte(db))
 
 
-def set_output_treble(output: int, db: float, *, output_count: int = 24) -> bytes:
-    out = _channel_byte(output, output_count, "output")
-    return _frame(bytes([0x03, 0x30, out, _tone_byte(db)]))
+def query_output_bass(spec: MatrixSpec, output: int) -> bytes:
+    return _query_out(spec, 0x2F, output)
 
 
-def query_output_treble(output: int, *, output_count: int = 24) -> bytes:
-    return _frame(bytes([0x03, 0x30, 0xF5, _channel_byte(output, output_count, "output")]))
+def set_output_treble(spec: MatrixSpec, output: int, db: float) -> bytes:
+    return _out(spec, 0x30, output, _tone_byte(db))
 
 
-def set_output_balance(output: int, db: float, *, output_count: int = 24) -> bytes:
+def query_output_treble(spec: MatrixSpec, output: int) -> bytes:
+    return _query_out(spec, 0x30, output)
+
+
+def set_output_balance(spec: MatrixSpec, output: int, db: float) -> bytes:
     """Balance uses the tone encoding: -12 is full left, +12 full right, 0 centre."""
-    out = _channel_byte(output, output_count, "output")
-    return _frame(bytes([0x03, 0x31, out, _tone_byte(db)]))
+    return _out(spec, 0x31, output, _tone_byte(db))
 
 
-def query_output_balance(output: int, *, output_count: int = 24) -> bytes:
-    return _frame(bytes([0x03, 0x31, 0xF5, _channel_byte(output, output_count, "output")]))
+def query_output_balance(spec: MatrixSpec, output: int) -> bytes:
+    return _query_out(spec, 0x31, output)
 
 
-def set_output_loudness(output: int, *, on: bool, output_count: int = 24) -> bytes:
-    opcode = 0x1A if on else 0x1B
-    return _frame(bytes([0x03, opcode, _channel_byte(output, output_count, "output")]))
+def set_output_loudness(spec: MatrixSpec, output: int, *, on: bool) -> bytes:
+    return _frame(bytes([0x03, 0x1A if on else 0x1B, spec.output_byte(output)]))
 
 
-def query_output_loudness(output: int, *, output_count: int = 24) -> bytes:
-    return _frame(bytes([0x03, 0x1A, 0xF5, _channel_byte(output, output_count, "output")]))
+def query_output_loudness(spec: MatrixSpec, output: int) -> bytes:
+    return _query_out(spec, 0x1A, output)
 
 
-def set_output_mono(output: int, *, mono: bool, output_count: int = 24) -> bytes:
-    opcode = 0x11 if mono else 0x10
-    return _frame(bytes([0x03, opcode, _channel_byte(output, output_count, "output")]))
+def set_output_mono(spec: MatrixSpec, output: int, *, mono: bool) -> bytes:
+    return _frame(bytes([0x03, 0x11 if mono else 0x10, spec.output_byte(output)]))
 
 
-def query_output_mono(output: int, *, output_count: int = 24) -> bytes:
-    return _frame(bytes([0x03, 0x10, 0xF5, _channel_byte(output, output_count, "output")]))
+def query_output_mono(spec: MatrixSpec, output: int) -> bytes:
+    return _query_out(spec, 0x10, output)
 
 
-def set_eq_frequency(output: int, band: int, value: int, *, output_count: int = 24) -> bytes:
-    out = _channel_byte(output, output_count, "output")
-    return _frame(bytes([0x03, _band_opcode(_EQ_FREQUENCY_BASE, band), out, value]))
+# -- parametric EQ -----------------------------------------------------------------------------
 
 
-def query_eq_frequency(output: int, band: int, *, output_count: int = 24) -> bytes:
-    out = _channel_byte(output, output_count, "output")
-    return _frame(bytes([0x03, _band_opcode(_EQ_FREQUENCY_BASE, band), 0xF5, out]))
+def set_eq_frequency(spec: MatrixSpec, output: int, band: int, value: int) -> bytes:
+    return _frame(
+        bytes([0x03, _band_opcode(_EQ_FREQUENCY_BASE, band), spec.output_byte(output), value])
+    )
 
 
-def set_eq_gain(output: int, band: int, db: float, *, output_count: int = 24) -> bytes:
-    out = _channel_byte(output, output_count, "output")
-    return _frame(bytes([0x03, _band_opcode(_EQ_GAIN_BASE, band), out, _tone_byte(db)]))
+def query_eq_frequency(spec: MatrixSpec, output: int, band: int) -> bytes:
+    return _frame(
+        bytes([0x03, _band_opcode(_EQ_FREQUENCY_BASE, band), 0xF5, spec.output_byte(output)])
+    )
 
 
-def query_eq_gain(output: int, band: int, *, output_count: int = 24) -> bytes:
-    out = _channel_byte(output, output_count, "output")
-    return _frame(bytes([0x03, _band_opcode(_EQ_GAIN_BASE, band), 0xF5, out]))
+def set_eq_gain(spec: MatrixSpec, output: int, band: int, db: float) -> bytes:
+    return _frame(
+        bytes([0x03, _band_opcode(_EQ_GAIN_BASE, band), spec.output_byte(output), _tone_byte(db)])
+    )
 
 
-def set_eq_q(output: int, band: int, value: int, *, output_count: int = 24) -> bytes:
-    out = _channel_byte(output, output_count, "output")
-    return _frame(bytes([0x03, _band_opcode(_EQ_Q_BASE, band), out, value]))
+def query_eq_gain(spec: MatrixSpec, output: int, band: int) -> bytes:
+    return _frame(bytes([0x03, _band_opcode(_EQ_GAIN_BASE, band), 0xF5, spec.output_byte(output)]))
 
 
-def query_eq_q(output: int, band: int, *, output_count: int = 24) -> bytes:
-    out = _channel_byte(output, output_count, "output")
-    return _frame(bytes([0x03, _band_opcode(_EQ_Q_BASE, band), 0xF5, out]))
+def set_eq_q(spec: MatrixSpec, output: int, band: int, value: int) -> bytes:
+    return _frame(bytes([0x03, _band_opcode(_EQ_Q_BASE, band), spec.output_byte(output), value]))
 
 
-def set_input_gain(source: int, gain: int, *, input_count: int = 24) -> bytes:
+def query_eq_q(spec: MatrixSpec, output: int, band: int) -> bytes:
+    return _frame(bytes([0x03, _band_opcode(_EQ_Q_BASE, band), 0xF5, spec.output_byte(output)]))
+
+
+# -- inputs ------------------------------------------------------------------------------------
+
+
+def set_input_gain(spec: MatrixSpec, source: int, gain: int) -> bytes:
     """Input gain is sent doubled, per the Control4 driver."""
-    src = _channel_byte(source, input_count, "input")
-    return _frame(bytes([0x02, 0x04, src, gain * 2]))
+    return _frame(bytes([0x02, 0x04, spec.input_byte(source), gain * 2]))
 
 
-def query_input_gain(source: int, *, input_count: int = 24) -> bytes:
-    return _frame(bytes([0x02, 0x04, 0xF5, _channel_byte(source, input_count, "input")]))
+def query_input_gain(spec: MatrixSpec, source: int) -> bytes:
+    return _frame(bytes([0x02, 0x04, 0xF5, spec.input_byte(source)]))
 
 
-def query_audio_sense(source: int, *, input_count: int = 24) -> bytes:
-    return _frame(bytes([0x0A, 0xA0, 0xF5, _channel_byte(source, input_count, "input")]))
+def query_audio_sense(spec: MatrixSpec, source: int) -> bytes:
+    return _frame(bytes([0x0A, 0xA0, 0xF5, spec.input_byte(source)]))
 
 
-def assign_output_to_group(output: int, group: int, *, output_count: int = 24) -> bytes:
-    """``group`` is 1-based (1 = A). Group 0 on the wire is group A."""
+# -- groups ------------------------------------------------------------------------------------
+
+
+def _group_byte(group: int) -> int:
     if not 1 <= group <= len(GROUP_LETTERS):
         msg = f"group {group} outside 1..{len(GROUP_LETTERS)}"
         raise ValueError(msg)
-    out = _channel_byte(output, output_count, "output")
-    return _frame(bytes([0x03, 0x32, out, group - 1]))
+    return group - 1
+
+
+def assign_output_to_group(spec: MatrixSpec, output: int, group: int) -> bytes:
+    """``group`` is 1-based (1 = A)."""
+    return _out(spec, 0x32, output, _group_byte(group))
 
 
 def query_group_source(group: int) -> bytes:
-    return _frame(bytes([0x04, 0x48, 0xF5, group - 1]))
+    return _frame(bytes([0x04, 0x48, 0xF5, _group_byte(group)]))
 
 
 def query_group_volume(group: int) -> bytes:
-    return _frame(bytes([0x04, 0x47, 0xF5, group - 1]))
+    return _frame(bytes([0x04, 0x47, 0xF5, _group_byte(group)]))
 
 
-def _trigger_bank_byte(bank: int, output_count: int) -> int:
-    """Bank 1..3 are the output banks; ASG is addressed by :func:`set_trigger_asg`."""
-    if not 1 <= bank <= 3:
-        msg = f"trigger bank {bank} outside 1..3"
-        raise ValueError(msg)
-    if bank > 1 and output_count <= 8:
-        msg = f"an {output_count}-output matrix has no trigger bank {bank}"
-        raise ValueError(msg)
-    return bank - 1
+# -- triggers ----------------------------------------------------------------------------------
 
 
-def set_trigger_bank(bank: int, on: bool, *, output_count: int = 24) -> bytes:
-    opcode = 0x50 if on else 0x51
-    return _frame(bytes([0x05, opcode, _trigger_bank_byte(bank, output_count)]))
+def set_trigger_bank(spec: MatrixSpec, bank: int, *, on: bool) -> bytes:
+    return _frame(bytes([0x05, 0x50 if on else 0x51, spec.trigger_bank_byte(bank)]))
 
 
-def query_trigger_bank(bank: int, *, output_count: int = 24) -> bytes:
-    return _frame(bytes([0x05, 0x50, 0xF5, _trigger_bank_byte(bank, output_count)]))
+def query_trigger_bank(spec: MatrixSpec, bank: int) -> bytes:
+    return _frame(bytes([0x05, 0x50, 0xF5, spec.trigger_bank_byte(bank)]))
 
 
-def set_trigger_asg(on: bool, *, output_count: int = 24) -> bytes:
-    """ASG sits after the last output bank, so its index depends on the model.
-
-    An 8x8 has one output bank, putting ASG at index 1 -- the same index a 24x24 uses for its
-    9-16 bank. Addressing ASG without knowing the model toggles the wrong bank on a 24x24.
-    """
-    index = 1 if output_count <= 8 else 3
-    opcode = 0x50 if on else 0x51
-    return _frame(bytes([0x05, opcode, index]))
+def set_trigger_asg(spec: MatrixSpec, *, on: bool) -> bytes:
+    """ASG sits after the last output bank, so its index depends on the model."""
+    return _frame(bytes([0x05, 0x50 if on else 0x51, spec.asg_index]))
 
 
-def query_trigger_asg(*, output_count: int = 24) -> bytes:
-    index = 1 if output_count <= 8 else 3
-    return _frame(bytes([0x05, 0x50, 0xF5, index]))
+def query_trigger_asg(spec: MatrixSpec) -> bytes:
+    return _frame(bytes([0x05, 0x50, 0xF5, spec.asg_index]))
+
+
+# -- system ------------------------------------------------------------------------------------
 
 
 def query_power() -> bytes:
     return _frame(bytes([0x01, 0x01, 0xF5]))
 
 
-def set_power(on: bool) -> bytes:
+def set_power(*, on: bool) -> bytes:
     """Only power-on is ever useful.
 
     The Control4 driver disables power-off entirely, commenting that the device's power-on delay
