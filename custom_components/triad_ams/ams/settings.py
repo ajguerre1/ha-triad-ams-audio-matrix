@@ -42,6 +42,14 @@ CONF_SCAN_INTERVAL = "scan_interval"
 CONF_MODEL = "model"
 CONF_OUTPUT_COUNT = "output_count"
 CONF_INPUT_COUNT = "input_count"
+#: Added by this integration, so it is absent from every entry written by the one it replaces.
+CONF_TRACK_TURN_ON_VOLUME = "track_turn_on_volume"
+
+#: On by default, and the default matters. Control4 does this today: any volume change it makes
+#: schedules a write of that volume into the device's turn-on register, which is what makes zones
+#: resume where they were left. Defaulting off would silently change how the house behaves on the
+#: day Control4 is switched off, which is the one thing the replacement is supposed not to do.
+DEFAULT_TRACK_TURN_ON_VOLUME = True
 
 
 @dataclass(frozen=True, slots=True)
@@ -52,6 +60,7 @@ class EntrySettings:
     active_outputs: list[int]
     active_inputs: list[int]
     scan_interval: int
+    track_turn_on_volume: bool
     _max_volumes: dict[int, int]
 
     @classmethod
@@ -62,8 +71,20 @@ class EntrySettings:
             active_outputs=cls._active(data, options, CONF_ACTIVE_OUTPUTS, spec.outputs),
             active_inputs=cls._active(data, options, CONF_ACTIVE_INPUTS, spec.inputs),
             scan_interval=int(options.get(CONF_SCAN_INTERVAL) or DEFAULT_SCAN_INTERVAL),
+            track_turn_on_volume=cls._tracking(options),
             _max_volumes=cls._caps(options),
         )
+
+    @staticmethod
+    def _tracking(options: Mapping[str, Any]) -> bool:
+        """Absent means on -- ``options.get(key, default)`` is wrong here.
+
+        Entries written by the integration this one replaces have no such key, and neither does a
+        newly created one until the options flow is opened. Reading a missing key as ``False``
+        would turn the behaviour off for every existing installation on upgrade, silently.
+        """
+        stored = options.get(CONF_TRACK_TURN_ON_VOLUME)
+        return DEFAULT_TRACK_TURN_ON_VOLUME if stored is None else bool(stored)
 
     @staticmethod
     def _spec(data: Mapping[str, Any]) -> MatrixSpec:

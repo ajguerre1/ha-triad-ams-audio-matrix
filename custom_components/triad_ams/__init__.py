@@ -55,6 +55,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: TriadConfigEntry) -> boo
         scan_interval=settings.scan_interval,
         name=entry.title,
         entry_id=entry.entry_id,
+        track_turn_on_volume=settings.track_turn_on_volume,
     )
     await coordinator.async_config_entry_first_refresh()
 

@@ -245,3 +245,34 @@ class TestAudioSenseSetters:
         for bad in (-1, 256):
             with pytest.raises(ValueError):
                 p.set_audio_sense_off_delay(bad)
+
+
+class TestAddressingMode:
+    """FR-17. The command's name in the driver promises more than it delivers."""
+
+    def test_the_query_is_the_drivers_constant(self) -> None:
+        assert p.query_ip_mode() == bytes.fromhex("FF55030881F5")
+
+    def test_dynamic_ip_is_what_dhcp_looks_like(self) -> None:
+        """Measured 2026-08-29 on an AMS8 (V1.05.74) and an AMS24 (V1.06.84).
+
+        Both answer the literal `dynamic_ip`. There is no address in the response, which is why
+        the function is not called `query_ip_address` despite the driver's constant being
+        `getIpAddress` -- naming it that would promise something it does not return.
+        """
+        assert p.parse_ip_mode("dynamic_ip") == "dhcp"
+
+    def test_an_unrecognised_answer_is_returned_rather_than_raised(self) -> None:
+        """The deliberate exception to this module's parse-or-raise rule.
+
+        This feeds a diagnostic whose job is to report what the unit says. A firmware answering
+        something new is the case most worth seeing, and a ParseError would hide exactly the
+        information the entity exists to surface. The static spelling is itself unverified -- no
+        unit here is statically addressed.
+        """
+        assert p.parse_ip_mode("something_new") == "something_new"
+
+    def test_a_command_error_still_raises(self) -> None:
+        """Tolerating unknown text must not extend to tolerating a failed command."""
+        with pytest.raises(CommandError):
+            p.parse_ip_mode("Command error")

@@ -85,12 +85,28 @@ removal.
 | # | Task | Traces to | Status | Evidence |
 |---|---|---|---|---|
 | 30 | `send_bursty` + the two audio-sense setter builders | FR-14, D-13 | **done** | 8 tests. The drain ends on a quiet socket, pinned by a test that makes the simulator send more frames than there are inputs |
-| 31 | Audio-sense enable switch + off-delay number; rewrite `repairs.py` / `strings.json` | FR-14 | next | The repair currently tells users to configure Control4 — both halves of that advice become wrong |
-| 32 | Routing debounce | FR-13, D-11 | todo | Per-output `Debouncer`, wrapping the write *and* its re-read |
-| 33 | Turn-on volume tracking | FR-12, D-12 | todo | Option decides which entity exists; writes the re-read value, not the sent one |
-| 34 | Max volume written to the device on change | FR-15, D-14 | todo | One setting, two enforcement points. Never written on connect |
-| 35 | `ams/presets.py` + `apply_eq_preset` on `media_player` | FR-16, D-15 | todo | 7 generic curves; the 76 speaker curves are deliberately excluded |
-| 36 | IP address sensor + diagnostics redaction | FR-17 | todo | Redacted alongside host and MAC |
+| 31 | Audio-sense enable switch + off-delay number; repair rewritten as a **fixable** flow | FR-14 | **done** | Two read-only entities *replaced*, not joined. New `request_audio_sense_settings` tier |
+| 32 | Routing debounce | FR-13, D-11 | **done** | `coordinator.async_set_route`, per-output `Debouncer`, wrapping the write *and* its re-read |
+| 33 | Turn-on volume tracking | FR-12, D-12 | **done** | Option decides which entity exists; writes the **re-read** value, not the sent one |
+| 34 | Max volume written to the device on change | FR-15, D-14 | **done** | Written from the options flow, which is the only place that knows both old and new. Never on connect |
+| 35 | `ams/presets.py` + `apply_eq_preset` on `media_player` | FR-16, D-15 | **done** | 7 generic curves, 7 tests; the 76 speaker curves deliberately excluded |
+| 36 | Addressing-mode sensor | FR-17 | **done** | Renamed on measurement — see below |
+
+**Task 31 turned into a subtraction.** Two read-only entities were *replaced* rather than joined:
+`TriadAudioSenseEnabledSensor` became a switch, and `TriadAudioSenseDelaySensor` became a number.
+Keeping the read-only ones beside writable equivalents would have put one value in two entities
+with only one able to change it. The net is fewer entities and more capability.
+
+The repair issue became **fixable in place** rather than merely re-worded. Pointing at the new
+switch would have been a worse instruction than it sounds: every non-`media_player` entity is
+disabled by default, so "turn on the switch" first means "find and enable the entity".
+
+**Task 36's requirement was wrong, and the hardware said so.** FR-17 asked for an IP-address
+diagnostic on the strength of the driver's `getIpAddress` constant. Probed read-only against an
+AMS8 (V1.05.74) and an AMS24 (V1.06.84): both answer the literal `dynamic_ip` — the **addressing
+mode**, with no address in it. The entity is named `Addressing` for what it returns. It also
+closes A-03 in passing, by confirming both units are on DHCP. No diagnostics redaction is needed
+after all, since a mode is not site data.
 
 **Task 30 notes.** The wire format came from `ariel_protocol.lua`, not from guesswork, and it
 carried a trap: the driver's function is `disableAudioSense(disabled)` and writes **`1` for

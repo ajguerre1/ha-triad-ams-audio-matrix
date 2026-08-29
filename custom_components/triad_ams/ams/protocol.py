@@ -375,6 +375,40 @@ def query_mac_address() -> bytes:
     return _frame(bytes([0x08, 0x80, 0xF5]))
 
 
+def query_ip_mode() -> bytes:
+    """Ask whether the unit takes its address from DHCP or holds a static one.
+
+    **This does not return an address**, despite the Control4 driver naming its constant
+    ``getIpAddress``. Measured 2026-08-29 against an AMS8 on V1.05.74 and an AMS24 on V1.06.84:
+    both answer the literal string ``dynamic_ip``, with no address in it. Named for what it
+    returns rather than for the driver's constant, which promises something it does not deliver.
+    """
+    return _frame(bytes([0x08, 0x81, 0xF5]))
+
+
+#: What the device calls DHCP. The static spelling is inferred from this one and is **unverified**
+#: -- no unit here is statically addressed, so it has never been observed.
+IP_MODE_DHCP: Final = "dhcp"
+IP_MODE_STATIC: Final = "static"
+
+
+def parse_ip_mode(text: str) -> str:
+    """``dynamic_ip`` -> ``"dhcp"``. Returns the raw token for anything unrecognised.
+
+    Deliberately does **not** raise on an unknown answer, unlike every other parser here. This
+    feeds a diagnostic whose entire job is to report what the unit says; a firmware that answers
+    something new is exactly the case worth seeing, and turning it into a ParseError would hide
+    the one piece of information the entity exists to show.
+    """
+    _guard(text)
+    token = text.strip().lower()
+    if "dynamic" in token or "dhcp" in token:
+        return IP_MODE_DHCP
+    if "static" in token:
+        return IP_MODE_STATIC
+    return token
+
+
 # --------------------------------------------------------------------------------------------
 # Frame decoding
 # --------------------------------------------------------------------------------------------

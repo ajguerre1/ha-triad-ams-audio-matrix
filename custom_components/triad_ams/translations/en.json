@@ -40,21 +40,12 @@
         "title": "Channels and limits",
         "description": "Enable the channels in use, cap any zone that should not be driven to full, and set how often the matrix is polled.",
         "data": {
-          "scan_interval": "Poll interval"
+          "scan_interval": "Poll interval",
+          "track_turn_on_volume": "Remember each zone's volume"
         },
         "data_description": {
-          "scan_interval": "Lower values notice another controller's changes sooner, at the cost of more traffic."
-        }
-      }
-    }
-  },
-  "entity": {
-    "binary_sensor": {
-      "audio_sense_enabled": {
-        "name": "Audio sense enabled",
-        "state": {
-          "off": "Not measuring",
-          "on": "Measuring"
+          "scan_interval": "Lower values notice another controller's changes sooner, at the cost of more traffic.",
+          "track_turn_on_volume": "Store a zone's volume as its turn-on volume once it settles, so it comes back where you left it. This is what Control4 does. Turn it off to set each zone's turn-on volume yourself, which replaces the read-only value with one you can edit."
         }
       }
     }
@@ -62,7 +53,18 @@
   "issues": {
     "audio_sense_disabled": {
       "title": "Audio sense is switched off on {matrix}",
-      "description": "You have enabled audio-sense entities for **{matrix}**, but the matrix is not measuring, so they will stay unavailable.\n\nThe device reports the same value for \"no audio\" and \"not measuring\", so this cannot be shown as simply off without asserting something the hardware has not determined.\n\n**This is not changed in Home Assistant.** The setting lives in the Control4 driver for this matrix: set `SET_DISABLE_AUDIO_SENSE` to `DISABLED = false`. Changing it on the device instead does not last -- the driver re-asserts its own value every time it reconnects.\n\nIf you did not intend to use audio sense, disable those entities and this will clear."
+      "fix_flow": {
+        "step": {
+          "confirm": {
+            "title": "Turn on audio sense",
+            "description": "Audio-sense entities are enabled for this matrix, but it is not measuring, so they will stay unavailable.\n\nThe device reports the same value for \"no audio\" and \"not measuring\", so this cannot be shown as simply off without asserting something the hardware has not determined.\n\nSubmit to turn measuring on. If you did not intend to use audio sense, disable those entities instead and this will clear on its own."
+          }
+        },
+        "abort": {
+          "entry_unavailable": "That matrix is no longer set up, so there is nothing to change.",
+          "cannot_enable": "The matrix did not accept the command. Check that it is reachable and try again."
+        }
+      }
     }
   },
   "services": {
@@ -81,6 +83,16 @@
         "q": {
           "name": "Q",
           "description": "Band Q. The matrix offers 0.5, 0.6, 0.7, 0.8, 0.9, 1, 2 and 3."
+        }
+      }
+    },
+    "apply_eq_preset": {
+      "name": "Apply EQ preset",
+      "description": "Write all five EQ bands of a zone at once. Matches the presets the Control4 driver offers, so a zone sounds the same after the changeover. Define your own by making a script that calls this or Set EQ band.",
+      "fields": {
+        "preset": {
+          "name": "Preset",
+          "description": "Flat resets every band to 0 dB."
         }
       }
     },

@@ -8,6 +8,8 @@ be added twice.
 
 from __future__ import annotations
 
+import logging
+from collections.abc import Mapping
 from typing import Any
 
 import voluptuous as vol
@@ -23,6 +25,7 @@ from homeassistant.helpers.selector import selector
 from .ams.client import AmsClient
 from .ams.errors import TriadError
 from .ams.model import MODELS
+from .ams.settings import EntrySettings
 from .const import (
     CONF_ACTIVE_INPUTS,
     CONF_ACTIVE_OUTPUTS,
@@ -34,12 +37,16 @@ from .const import (
     CONF_OUTPUT_MAX_VOLUMES,
     CONF_PORT,
     CONF_SCAN_INTERVAL,
+    CONF_TRACK_TURN_ON_VOLUME,
     DEFAULT_NAME,
     DEFAULT_PORT,
     DEFAULT_SCAN_INTERVAL,
+    DEFAULT_TRACK_TURN_ON_VOLUME,
     DOMAIN,
     MAX_VOLUME_PERCENT,
 )
+
+_LOGGER = logging.getLogger(__name__)
 
 
 def _connection_schema(defaults: dict[str, Any] | None = None) -> vol.Schema:
@@ -174,6 +181,12 @@ class TriadOptionsFlow(OptionsFlow):
         caps = options.get(CONF_OUTPUT_MAX_VOLUMES) or {}
 
         if user_input is not None:
+            new_caps = {
+                str(i): int(user_input[f"max_volume_{i}"])
+                for i in range(1, outputs + 1)
+                if user_input.get(f"max_volume_{i}") is not None
+            }
+            await self._push_changed_caps(caps, new_caps)
             return self.async_create_entry(
                 data={
                     **options,
@@ -183,11 +196,10 @@ class TriadOptionsFlow(OptionsFlow):
                     CONF_ACTIVE_INPUTS: [
                         i for i in range(1, inputs + 1) if user_input.get(f"input_{i}")
                     ],
-                    CONF_OUTPUT_MAX_VOLUMES: {
-                        str(i): int(user_input[f"max_volume_{i}"])
-                        for i in range(1, outputs + 1)
-                        if user_input.get(f"max_volume_{i}") is not None
-                    },
+                    CONF_OUTPUT_MAX_VOLUMES: new_caps,
+                    CONF_TRACK_TURN_ON_VOLUME: bool(
+                        user_input.get(CONF_TRACK_TURN_ON_VOLUME, DEFAULT_TRACK_TURN_ON_VOLUME)
+                    ),
                     CONF_SCAN_INTERVAL: int(
                         user_input.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL)
                     ),
@@ -221,5 +233,41 @@ class TriadOptionsFlow(OptionsFlow):
                 default=int(options.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL)),
             )
         ] = selector({"number": {"min": 5, "max": 300, "step": 5, "unit_of_measurement": "s"}})
+        schema[
+            vol.Optional(
+                CONF_TRACK_TURN_ON_VOLUME,
+                default=EntrySettings.resolve(entry.data, options).track_turn_on_volume,
+            )
+        ] = bool
 
         return self.async_show_form(step_id="init", data_schema=vol.Schema(schema))
+
+    async def _push_changed_caps(self, old: Mapping[str, Any], new: Mapping[str, int]) -> None:
+        """Write changed volume caps to the matrix's own max-volume register.
+
+        **On change only, never on connect** (D-05, D-14). The device has a setter for this and no
+        getter, so Home Assistant's stored value is the only record of it — which means the write
+        has to happen at the moment the user changes it, and here is the only place that knows both
+        the old value and the new one.
+
+        A failure is logged rather than raised. The Home Assistant-side clamp still enforces the
+        cap on everything routed through this integration, so the setting is not lost; what is lost
+        is the hardware belt-and-braces against a writer that bypasses Home Assistant entirely.
+        Failing the options save over that would throw away the user's whole edit.
+        """
+        entry = self.config_entry
+        if not hasattr(entry, "runtime_data"):
+            return
+        client = entry.runtime_data.client
+        for key, value in new.items():
+            if int(old.get(key, old.get(int(key), MAX_VOLUME_PERCENT))) == value:
+                continue
+            try:
+                await client.set_max_volume_step(int(key), value)
+            except TriadError as err:
+                _LOGGER.warning(
+                    "output %s: could not set the matrix's own max volume to %s: %s",
+                    key,
+                    value,
+                    err,
+                )

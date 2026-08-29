@@ -16,7 +16,7 @@ from dataclasses import dataclass
 
 import voluptuous as vol
 from homeassistant.components.number import NumberEntity, NumberMode
-from homeassistant.const import PERCENTAGE, UnitOfSoundPressure
+from homeassistant.const import PERCENTAGE, UnitOfSoundPressure, UnitOfTime
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import entity_platform
@@ -25,11 +25,16 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from . import TriadConfigEntry
 from .ams.errors import TriadError
-from .ams.protocol import MAX_INPUT_GAIN_DB, MIN_INPUT_GAIN_DB
+from .ams.protocol import (
+    MAX_INPUT_GAIN_DB,
+    MAX_OFF_DELAY_MINUTES,
+    MIN_INPUT_GAIN_DB,
+    MIN_OFF_DELAY_MINUTES,
+)
 from .ams.settings import EntrySettings
 from .ams.volume import MAX_STEP
 from .coordinator import OutputDsp, TriadCoordinator
-from .entity import TriadInputEntity, TriadOutputDspEntity
+from .entity import TriadEntity, TriadInputEntity, TriadOutputDspEntity
 
 #: Tone controls share one encoding and therefore one range: -12..+12 dB in half-steps.
 TONE_MIN, TONE_MAX, TONE_STEP = -12.0, 12.0, 0.5
@@ -89,17 +94,19 @@ TONE_SPECS: tuple[TriadNumberSpec, ...] = (
         lambda dsp: dsp.balance_db,
         lambda c, out, v: c.client.set_balance(out, v),
     ),
-    TriadNumberSpec(
-        key="turn_on_volume",
-        name="Turn-on volume",
-        minimum=0,
-        maximum=MAX_STEP,
-        step=1,
-        unit=PERCENTAGE,
-        read=lambda dsp: float(dsp.turn_on_step),
-        write=lambda c, out, v: c.client.set_turn_on_volume_step(out, round(v)),
-        category=EntityCategory.CONFIG,
-    ),
+)
+
+#: Only offered when tracking is switched off -- see `async_setup_entry`.
+TURN_ON_VOLUME_SPEC = TriadNumberSpec(
+    key="turn_on_volume",
+    name="Turn-on volume",
+    minimum=0,
+    maximum=MAX_STEP,
+    step=1,
+    unit=PERCENTAGE,
+    read=lambda dsp: float(dsp.turn_on_step),
+    write=lambda c, out, v: c.client.set_turn_on_volume_step(out, round(v)),
+    category=EntityCategory.CONFIG,
 )
 
 
@@ -112,13 +119,20 @@ async def async_setup_entry(
     coordinator = entry.runtime_data
     settings = EntrySettings.resolve(entry.data, entry.options)
 
+    # The option decides which entity exists, rather than making one read-only. A writable control
+    # that something else overwrites ten seconds later is a control that lies; Home Assistant has
+    # no read-only `number` anyway, so the alternative would be raising on write or swapping
+    # platforms. When tracking is on, `sensor.py` shows the value instead.
+    specs = TONE_SPECS if settings.track_turn_on_volume else (*TONE_SPECS, TURN_ON_VOLUME_SPEC)
+
     entities: list[NumberEntity] = []
     for output in settings.active_outputs:
-        entities.extend(TriadToneNumber(coordinator, entry, output, spec) for spec in TONE_SPECS)
+        entities.extend(TriadToneNumber(coordinator, entry, output, spec) for spec in specs)
         entities.extend(TriadEqGainNumber(coordinator, entry, output, band) for band in EQ_BANDS)
     entities.extend(
         TriadInputGainNumber(coordinator, entry, source) for source in settings.active_inputs
     )
+    entities.append(TriadAudioSenseOffDelay(coordinator, entry))
     async_add_entities(entities)
 
     # An EQ band has three parameters spread across three entities. Setting them one at a time
@@ -294,3 +308,49 @@ class TriadInputGainNumber(TriadInputEntity, NumberEntity):
             msg = f"command failed for input {self._source}: {err}"
             raise HomeAssistantError(msg) from err
         await self.coordinator.async_refresh_inputs()
+
+
+class TriadAudioSenseOffDelay(TriadEntity, NumberEntity):
+    """Minutes of silence before the matrix sleeps an analog input. Matrix-wide.
+
+    **Minutes, not seconds.** The device answers ``0x1`` for its one-minute default, and the
+    Control4 driver initialises the same field to 30 -- which on this scale is half an hour rather
+    than the half-minute the number suggests. Getting the unit wrong here is a sixtyfold error that
+    looks entirely reasonable in a UI.
+
+    Replaced the read-only sensor that used to report this, once FR-14 made it settable.
+    """
+
+    _attr_entity_registry_enabled_default = False
+    _attr_entity_category = EntityCategory.CONFIG
+    _attr_mode = NumberMode.BOX
+    _attr_native_min_value = MIN_OFF_DELAY_MINUTES
+    _attr_native_max_value = MAX_OFF_DELAY_MINUTES
+    _attr_native_step = 1
+    _attr_native_unit_of_measurement = UnitOfTime.MINUTES
+    _attr_name = "Audio sense off delay"
+
+    def __init__(self, coordinator: TriadCoordinator, entry: TriadConfigEntry) -> None:
+        super().__init__(coordinator, entry)
+        self._attr_unique_id = f"{entry.entry_id}_audio_sense_off_delay"
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        self.async_on_remove(self.coordinator.request_audio_sense_settings())
+
+    @property
+    def available(self) -> bool:
+        return super().available and self.native_value is not None
+
+    @property
+    def native_value(self) -> int | None:
+        data = self.coordinator.data
+        return data.audio_sense_off_delay if data else None
+
+    async def async_set_native_value(self, value: float) -> None:
+        try:
+            await self.coordinator.client.set_audio_sense_off_delay(round(value))
+        except TriadError as err:
+            msg = f"could not set the audio-sense off delay: {err}"
+            raise HomeAssistantError(msg) from err
+        await self.coordinator.async_refresh_sense_settings()

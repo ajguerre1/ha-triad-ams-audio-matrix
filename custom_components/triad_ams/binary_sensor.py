@@ -11,13 +11,12 @@ from homeassistant.components.binary_sensor import (
     BinarySensorEntity,
 )
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from . import TriadConfigEntry
 from .ams.settings import EntrySettings
 from .coordinator import TriadCoordinator
-from .entity import TriadEntity, TriadInputEntity
+from .entity import TriadInputEntity
 
 
 async def async_setup_entry(
@@ -29,11 +28,9 @@ async def async_setup_entry(
     coordinator = entry.runtime_data
     settings = EntrySettings.resolve(entry.data, entry.options)
 
-    entities: list[BinarySensorEntity] = [
+    async_add_entities(
         TriadAudioSenseSensor(coordinator, entry, source) for source in settings.active_inputs
-    ]
-    entities.append(TriadAudioSenseEnabledSensor(coordinator, entry))
-    async_add_entities(entities)
+    )
 
 
 class TriadAudioSenseSensor(TriadInputEntity, BinarySensorEntity):
@@ -73,37 +70,7 @@ class TriadAudioSenseSensor(TriadInputEntity, BinarySensorEntity):
         return self._reading
 
 
-class TriadAudioSenseEnabledSensor(TriadEntity, BinarySensorEntity):
-    """Whether this matrix measures audio sense at all.
-
-    Exists to answer the question the per-input sensors provoke. When audio sense is off, all 24
-    of them go unavailable at once, and without this the user is left guessing why.
-
-    There is deliberately no switch to change it. Enabling returns a burst of roughly one frame
-    per input, and the Control4 driver re-asserts its own value on every sync -- so a control here
-    would appear to work and silently revert. The durable setting lives in that driver.
-    """
-
-    _attr_entity_category = EntityCategory.DIAGNOSTIC
-    _attr_entity_registry_enabled_default = False
-    _attr_name = "Audio sense enabled"
-
-    def __init__(self, coordinator: TriadCoordinator, entry: TriadConfigEntry) -> None:
-        super().__init__(coordinator, entry)
-        self._attr_unique_id = f"{entry.entry_id}_audio_sense_enabled"
-
-    def registers_input_polling(self) -> bool:
-        return True
-
-    async def async_added_to_hass(self) -> None:
-        await super().async_added_to_hass()
-        self.async_on_remove(self.coordinator.request_input_polling())
-
-    @property
-    def available(self) -> bool:
-        return super().available and self.coordinator.data is not None
-
-    @property
-    def is_on(self) -> bool | None:
-        data = self.coordinator.data
-        return data.audio_sense_enabled if data else None
+# ``TriadAudioSenseEnabledSensor`` lived here until 2026-08-29, reporting whether the matrix was
+# measuring. FR-14 replaced it with a `switch`, which shows the same state and can change it --
+# keeping both would have put one value in two entities, and the read-only one is strictly the
+# weaker of the pair. See `switch.TriadAudioSenseSwitch`.

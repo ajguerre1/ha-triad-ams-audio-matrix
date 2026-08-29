@@ -86,6 +86,34 @@ plausible-looking response text would make the tests agree with a misreading of 
       — an inversion nothing else would catch, since the device accepts either value and reports
       success
 
+#### EQ presets — FR-16, task 35
+
+- [x] Every preset has exactly five bands, and every frequency and Q index resolves to a real
+      value. Guards a transcription slip that is otherwise invisible: the device **clamps** an
+      out-of-range Q and reports success, so a bad literal would ship and merely sound wrong
+- [x] Flat is actually flat — the one preset whose correctness can be asserted rather than checked
+- [x] **High Pass and Low Pass keep the driver's non-ascending band order.** Band order is what
+      reaches the device, so sorting them tidily would move each correction onto a different band
+- [x] An unknown preset name raises and lists the real ones, rather than falling back to Flat and
+      applying the opposite of what was asked
+
+#### Addressing mode — FR-17, task 36
+
+- [x] The query matches the driver's constant
+- [x] `dynamic_ip` parses as DHCP — measured on two units across two firmware revisions
+- [x] An unrecognised answer is **returned rather than raised**, deliberately against this
+      module's parse-or-raise rule: this feeds a diagnostic whose job is to report what the unit
+      says, and a ParseError would hide the one case worth seeing
+- [x] A `Command error` still raises — tolerating unknown text must not extend to tolerating a
+      failed command
+
+#### Turn-on volume tracking — FR-12, task 33
+
+- [x] **A missing option key means tracking is on.** Every entry written by the integration this
+      one replaces lacks the key, so reading it as `False` would silently drop the behaviour for
+      every existing installation on upgrade
+- [x] Explicit `true` and `false` are both honoured
+
 ### Privacy
 
 - [x] The audit enumerates a real set of files

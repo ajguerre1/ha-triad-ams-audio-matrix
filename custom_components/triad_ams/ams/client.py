@@ -293,6 +293,10 @@ class AmsClient:
     async def mac_address(self) -> str:
         return p.parse_mac_address(await self._exchange(p.query_mac_address()))
 
+    async def ip_mode(self) -> str:
+        """``"dhcp"`` or ``"static"`` -- the addressing mode, not an address."""
+        return p.parse_ip_mode(await self._exchange(p.query_ip_mode()))
+
     async def power(self) -> bool:
         return p.parse_power(await self._exchange(p.query_power()))
 

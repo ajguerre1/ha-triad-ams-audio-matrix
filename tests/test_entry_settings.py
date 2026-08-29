@@ -98,3 +98,25 @@ class TestScanInterval:
 
     def test_a_configured_interval_is_honoured(self) -> None:
         assert EntrySettings.resolve(_data(), {"scan_interval": 15}).scan_interval == 15
+
+
+class TestTurnOnVolumeTracking:
+    """FR-12. The default is the whole point, so it is pinned rather than assumed."""
+
+    def test_a_missing_key_means_tracking_is_on(self) -> None:
+        """Every entry written by the integration this one replaces lacks the key entirely.
+
+        `options.get(key, False)` would read those as "tracking off" and silently drop the
+        behaviour for every existing installation on upgrade -- zones would quietly stop resuming
+        at the volume they were left at, with nothing in the UI having changed.
+        """
+        settings = EntrySettings.resolve({"model": "AMS8"}, {})
+        assert settings.track_turn_on_volume is True
+
+    def test_an_explicit_false_is_honoured(self) -> None:
+        settings = EntrySettings.resolve({"model": "AMS8"}, {"track_turn_on_volume": False})
+        assert settings.track_turn_on_volume is False
+
+    def test_an_explicit_true_is_honoured(self) -> None:
+        settings = EntrySettings.resolve({"model": "AMS8"}, {"track_turn_on_volume": True})
+        assert settings.track_turn_on_volume is True

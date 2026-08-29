@@ -33,6 +33,26 @@ set_eq_band:
           step: 0.1
           mode: box
 
+apply_eq_preset:
+  target:
+    entity:
+      integration: triad_ams
+      domain: media_player
+  fields:
+    preset:
+      required: true
+      example: Rock
+      selector:
+        select:
+          options:
+            - Flat
+            - Rock
+            - Pop
+            - Jazz
+            - Classical
+            - High Pass
+            - Low Pass
+
 send_raw:
   fields:
     device_id:

@@ -47,6 +47,7 @@ async def async_setup_entry(
     for bank in range(1, settings.spec.trigger_banks + 1):
         entities.append(TriadTriggerBankSwitch(coordinator, entry, bank))
     entities.append(TriadAsgTriggerSwitch(coordinator, entry))
+    entities.append(TriadAudioSenseSwitch(coordinator, entry))
 
     async_add_entities(entities)
 
@@ -181,3 +182,62 @@ class TriadAsgTriggerSwitch(TriadTriggerSwitchBase):
 
     async def async_turn_off(self, **_: object) -> None:
         await self._apply(self.coordinator.client.set_trigger_asg(on=False))
+
+
+class TriadAudioSenseSwitch(TriadEntity, SwitchEntity):
+    """Whether this matrix measures audio sense at all. Matrix-wide, not per input.
+
+    Replaces the read-only binary sensor that used to report this. A control that both shows the
+    state and changes it is strictly better than one that only shows it, and having both would put
+    the same value in two places.
+
+    **This was withheld until Control4 was on its way out (FR-14).** The driver re-asserts its own
+    value on every reconnect, so under coexistence this switch would have appeared to work and
+    silently reverted -- worse than no switch. With a single writer the device value is durable.
+
+    Enabling is answered by a burst of roughly one frame per input, which the client drains; that
+    is why the write costs about half a second and why nothing here parses a reply.
+    """
+
+    _attr_entity_registry_enabled_default = False
+    _attr_entity_category = EntityCategory.CONFIG
+    _attr_name = "Audio sense"
+
+    def __init__(self, coordinator: TriadCoordinator, entry: TriadConfigEntry) -> None:
+        super().__init__(coordinator, entry)
+        self._attr_unique_id = f"{entry.entry_id}_audio_sense_enabled"
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        # The settings tier, not the input tier: this needs one matrix-wide read, where input
+        # polling would cost one per input to learn the same flag.
+        self.async_on_remove(self.coordinator.request_audio_sense_settings())
+
+    @property
+    def available(self) -> bool:
+        """Unavailable until actually read, rather than defaulting to off.
+
+        Off is a meaningful state here -- it is what every matrix in the reference installation
+        ships as -- so showing it before it has been read would be asserting the common case
+        rather than reporting one.
+        """
+        return super().available and self.is_on is not None
+
+    @property
+    def is_on(self) -> bool | None:
+        data = self.coordinator.data
+        return data.audio_sense_enabled if data else None
+
+    async def _apply(self, *, enabled: bool) -> None:
+        try:
+            await self.coordinator.client.set_audio_sense_enabled(enabled=enabled)
+        except TriadError as err:
+            msg = f"could not change audio sense: {err}"
+            raise HomeAssistantError(msg) from err
+        await self.coordinator.async_refresh_sense_settings()
+
+    async def async_turn_on(self, **_: object) -> None:
+        await self._apply(enabled=True)
+
+    async def async_turn_off(self, **_: object) -> None:
+        await self._apply(enabled=False)

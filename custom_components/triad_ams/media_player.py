@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Awaitable
 
+import voluptuous as vol
 from homeassistant.components.media_player import (
     MediaPlayerDeviceClass,
     MediaPlayerEntity,
@@ -13,10 +14,12 @@ from homeassistant.components.media_player import (
 )
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers import entity_platform
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from . import TriadConfigEntry
 from .ams.errors import TriadError
+from .ams.presets import PRESET_NAMES, bands_for
 from .ams.settings import EntrySettings
 from .ams.volume import MAX_STEP
 from .coordinator import TriadCoordinator
@@ -26,6 +29,9 @@ _LOGGER = logging.getLogger(__name__)
 
 #: Shown for an output with no source routed.
 SOURCE_OFF = "Off"
+
+SERVICE_APPLY_EQ_PRESET = "apply_eq_preset"
+ATTR_PRESET = "preset"
 
 
 async def async_setup_entry(
@@ -47,6 +53,15 @@ async def async_setup_entry(
             max_volume_percent=settings.max_volume(output),
         )
         for output in settings.active_outputs
+    )
+
+    # Hosted here rather than on the EQ entities, and that is the point: every DSP entity is
+    # disabled by default, so a service registered on one would be unreachable in the default
+    # configuration. `media_player` is the only entity an output is guaranteed to have.
+    entity_platform.async_get_current_platform().async_register_entity_service(
+        SERVICE_APPLY_EQ_PRESET,
+        {vol.Required(ATTR_PRESET): vol.In(PRESET_NAMES)},
+        "async_apply_eq_preset",
     )
 
 
@@ -122,7 +137,7 @@ class TriadOutputMediaPlayer(TriadOutputEntity, MediaPlayerEntity):
             return
         for number, name in self._sources.items():
             if name == source:
-                await self._command(self.coordinator.client.set_route(self._output, number))
+                await self.coordinator.async_set_route(self._output, number)
                 self._last_source = number
                 return
         msg = f"{source!r} is not one of this matrix's inputs"
@@ -139,7 +154,7 @@ class TriadOutputMediaPlayer(TriadOutputEntity, MediaPlayerEntity):
         if target is None:
             msg = "no inputs are enabled for this matrix"
             raise HomeAssistantError(msg)
-        await self._command(self.coordinator.client.set_route(self._output, target))
+        await self.coordinator.async_set_route(self._output, target)
 
     async def async_turn_off(self) -> None:
         """Disconnect the output. This is routing, not mains power.
@@ -150,14 +165,26 @@ class TriadOutputMediaPlayer(TriadOutputEntity, MediaPlayerEntity):
         """
         if (snapshot := self.snapshot) is not None and snapshot.source is not None:
             self._last_source = snapshot.source
-        await self._command(self.coordinator.client.disconnect_output(self._output))
+        await self.coordinator.async_set_route(self._output, None)
 
     async def async_set_volume_level(self, volume: float) -> None:
         step = round(max(0.0, min(volume, 1.0)) * MAX_STEP)
         if step > self._max_step:
             _LOGGER.debug("output %s capped from step %s to %s", self._output, step, self._max_step)
             step = self._max_step
-        await self._command(self.coordinator.client.set_volume_step(self._output, step))
+        await self._set_volume(step)
+
+    async def _set_volume(self, step: int) -> None:
+        """Volume goes through the coordinator, which owns the turn-on-volume follow-up.
+
+        Not through :meth:`_command`: ``async_set_volume`` already re-reads the output, and
+        routing it through the generic helper would refresh twice for one change.
+        """
+        try:
+            await self.coordinator.async_set_volume(self._output, step)
+        except TriadError as err:
+            msg = f"command failed for output {self._output}: {err}"
+            raise HomeAssistantError(msg) from err
 
     async def async_volume_up(self) -> None:
         await self._step_volume(+1)
@@ -175,10 +202,36 @@ class TriadOutputMediaPlayer(TriadOutputEntity, MediaPlayerEntity):
         if snapshot is None:
             return
         step = max(0, min(snapshot.volume_step + direction, self._max_step))
-        await self._command(self.coordinator.client.set_volume_step(self._output, step))
+        await self._set_volume(step)
 
     async def async_mute_volume(self, mute: bool) -> None:
         await self._command(self.coordinator.client.set_mute(self._output, mute=mute))
+
+    async def async_apply_eq_preset(self, preset: str) -> None:
+        """Write all five bands of a preset to this output, then re-read once.
+
+        A preset is an **action, not a state**. The device stores band values and has no notion of
+        a preset identifier, so there is nothing to query afterwards and no entity here pretending
+        otherwise -- "which preset is this zone on" is a question the hardware cannot answer.
+
+        Each band takes three writes, so this is fifteen commands. They are sent in band order and
+        the DSP is re-read once at the end rather than after each, which is both faster and avoids
+        publishing four intermediate curves nobody asked for.
+        """
+        bands = bands_for(preset)
+        client = self.coordinator.client
+        try:
+            for number, band in enumerate(bands, start=1):
+                await client.set_eq_frequency(self._output, number, band.frequency_hz)
+                await client.set_eq_gain(self._output, number, band.gain_db)
+                await client.set_eq_q(self._output, number, band.q)
+        except TriadError as err:
+            # Partial application is possible and worth saying so: some bands may already have
+            # moved, and the re-read below is what shows which.
+            msg = f"applying {preset!r} to output {self._output} failed part-way: {err}"
+            raise HomeAssistantError(msg) from err
+        finally:
+            await self.coordinator.async_refresh_output_dsp(self._output)
 
     async def _command(self, awaitable: Awaitable[None]) -> None:
         """Run a device command, then re-read this output only.

@@ -69,6 +69,46 @@ between frames is not the end of the burst. This makes each enable/disable cost 
 second, which is acceptable for a configuration action and is why the off-delay setter
 deliberately does *not* use this path.
 
+### Tasks 31–36 — the replacement features
+
+| Changed | What |
+|---|---|
+| `coordinator.py` | `request_audio_sense_settings` tier, `async_set_route` + `async_set_volume` with per-output debouncers, `_store_turn_on_volume`, `ip_mode` on the snapshot |
+| `switch.py`, `number.py`, `sensor.py`, `binary_sensor.py` | Audio-sense switch and off-delay number **replacing** two read-only entities; turn-on volume sensor; addressing sensor |
+| `repairs.py`, `strings.json` | The issue became a fixable flow |
+| `config_flow.py`, `ams/settings.py`, `const.py` | `track_turn_on_volume`; max volume pushed to the device on change |
+| `ams/presets.py`, `media_player.py`, `services.yaml` | 7 generic presets and `apply_eq_preset` |
+| `tests/` | 14 new offline tests |
+
+**Three places the plan changed on contact.**
+
+*Task 31 became a subtraction.* The design added a switch and a number. What shipped **replaced**
+two read-only entities with them — `TriadAudioSenseEnabledSensor` and `TriadAudioSenseDelaySensor`
+both reported values their replacements now show *and* control. Keeping both would have put one
+value in two entities with only one able to change it. Net: fewer entities, more capability.
+
+The repair issue became **fixable** rather than re-worded. Pointing users at the new switch reads
+fine until you remember every non-`media_player` entity is disabled by default — so the
+instruction would really have been "find the entity, enable it, then turn it on". A button that
+does it is a better answer than better prose.
+
+*The enable flag needed a tier of its own.* It had been riding the per-input tier, which meant
+learning one matrix-wide flag cost one read per input — 24 on an AMS24. `request_audio_sense_settings`
+separates "two reads for the matrix" from "one read per input".
+
+*Task 36's requirement was wrong.* FR-17 asked for an IP-address diagnostic, on the strength of
+the driver's `getIpAddress` constant. Probed read-only against both firmware revisions, the answer
+is the literal `dynamic_ip` — the **addressing mode**, no address in it. The entity is named
+`Addressing` for what the hardware returns rather than for what the driver's constant is called.
+Two consequences: it closes A-03 by confirming both units are on DHCP, and the design's
+"redact it alongside host and MAC" requirement falls away, because a mode is not site data.
+
+**A consequence of debouncing worth stating plainly.** `async_set_route` returns before the write
+reaches the device, so a routing failure reaches the log rather than the caller. That is inherent
+to coalescing, not a shortcut — what the user sees instead is the zone's source staying where it
+was, because the re-read reports what the device actually did. Volume is deliberately **not**
+debounced for this reason; only its turn-on-volume follow-up waits.
+
 ## Phase 7 audit — code against design
 
 Every file read against the design doc. Four deviations were predicted by the design review and
