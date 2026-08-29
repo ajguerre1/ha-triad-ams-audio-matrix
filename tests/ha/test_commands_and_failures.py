@@ -119,7 +119,7 @@ class TestTheControls:
         the number beats reporting None and looking like a fault."""
         await _setup(hass, simulator)
         simulator.mutate(1, source=7)
-        entry = list(hass.config_entries.async_entries("triad_ams"))[0]
+        entry = next(iter(hass.config_entries.async_entries("triad_ams")))
         await entry.runtime_data.async_refresh()
         await hass.async_block_till_done()
         entity = _entity(hass, ZONE)
