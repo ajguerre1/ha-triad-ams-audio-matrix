@@ -112,7 +112,7 @@ class TestOnlyRealModelsAreOffered:
     def test_ams16_is_not_a_product(self) -> None:
         """Removed 2026-08-29. It was never measured and never sourced -- it entered through the
         design doc and propagated into the model table, the README and the protocol reference.
-        The installation guide lists TS-AMS8 and TS-AMS24 only, and the two Control4 driver
+        The installation guide lists TS-AMS8 and TS-AMS24 only, and the two vendor driver
         archives are AMS8 and AMS24. Offering it invited a channel count nothing could support.
         """
         assert "AMS16" not in MODELS

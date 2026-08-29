@@ -20,7 +20,7 @@ from ams.eq import (
 
 class TestTheTable:
     def test_it_spans_exactly_the_range_the_driver_documents(self) -> None:
-        """0x00 is 20 Hz and 0x1E is 20 kHz, per the Control4 driver. 31 steps between them is
+        """0x00 is 20 Hz and 0x1E is 20 kHz, per the vendor driver. 31 steps between them is
         exactly the ISO 1/3-octave series, which is what makes the interior inferable."""
         assert MAX_FREQUENCY_INDEX == 30
         assert frequency_for_index(0) == 20

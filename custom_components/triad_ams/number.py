@@ -314,7 +314,7 @@ class TriadAudioSenseOffDelay(TriadEntity, NumberEntity):
     """Minutes of silence before the matrix sleeps an analog input. Matrix-wide.
 
     **Minutes, not seconds.** The device answers ``0x1`` for its one-minute default, and the
-    Control4 driver initialises the same field to 30 -- which on this scale is half an hour rather
+    vendor driver initialises the same field to 30 -- which on this scale is half an hour rather
     than the half-minute the number suggests. Getting the unit wrong here is a sixtyfold error that
     looks entirely reasonable in a UI.
 

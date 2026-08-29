@@ -7,7 +7,7 @@ something is broken.
 The one that qualifies is audio sense. When the matrix is not measuring, every audio-sense entity
 reports unavailable at once and the reason is invisible.
 
-**This became fixable in place on 2026-08-29 (FR-14).** Previously the remedy lived in the Control4
+**This became fixable in place on 2026-08-29 (FR-14).** Previously the remedy lived in the vendor
 driver and the issue could only describe it. Now the integration can set it, and doing so from here
 rather than pointing at the switch is not a convenience: the switch is disabled by default like
 every non-``media_player`` entity, so "turn on the switch" would first mean "find and enable the

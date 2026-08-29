@@ -173,14 +173,14 @@
         },
         "data_description": {
           "scan_interval": "Lower values notice another controller's changes sooner, at the cost of more traffic.",
-          "track_turn_on_volume": "Store a zone's volume as its turn-on volume once it settles, so it comes back where you left it. This is what Control4 does. Turn it off to set each zone's turn-on volume yourself, which replaces the read-only value with one you can edit."
+          "track_turn_on_volume": "Remember each zone's volume, so it comes back on at the level you left it at. Turn this off if you would rather set a fixed start-up volume for each zone yourself."
         }
       }
     }
   },
   "issues": {
     "audio_sense_disabled": {
-      "title": "Audio sense is switched off on {matrix}",
+      "title": "Audio detection is turned off on {matrix}",
       "fix_flow": {
         "step": {
           "confirm": {
@@ -216,7 +216,7 @@
     },
     "apply_eq_preset": {
       "name": "Apply EQ preset",
-      "description": "Write all five EQ bands of a zone at once. Matches the presets the Control4 driver offers, so a zone sounds the same after the changeover. Define your own by making a script that calls this or Set EQ band.",
+      "description": "Set all five equaliser bands of a zone in one step, using a ready-made preset. For your own settings, use a script that calls this or Set equaliser band.",
       "fields": {
         "preset": {
           "name": "Preset",

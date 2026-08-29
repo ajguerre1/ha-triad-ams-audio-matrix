@@ -39,3 +39,7 @@ htmlcov/
 Thumbs.db
 desktop.ini
 .DS_Store
+
+# Local development tooling. Not part of the integration.
+.claude/
+.the local toolkit.json

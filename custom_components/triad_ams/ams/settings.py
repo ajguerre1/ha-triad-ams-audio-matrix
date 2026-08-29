@@ -45,10 +45,10 @@ CONF_INPUT_COUNT = "input_count"
 #: Added by this integration, so it is absent from every entry written by the one it replaces.
 CONF_TRACK_TURN_ON_VOLUME = "track_turn_on_volume"
 
-#: On by default, and the default matters. Control4 does this today: any volume change it makes
+#: On by default, and the default matters. the vendor does this today: any volume change it makes
 #: schedules a write of that volume into the device's turn-on register, which is what makes zones
-#: resume where they were left. Defaulting off would silently change how the house behaves on the
-#: day Control4 is switched off, which is the one thing the replacement is supposed not to do.
+#: resume where they were left. Defaulting off would silently change how the system behaves on the
+#: day the vendor is switched off, which is the one thing the replacement is supposed not to do.
 DEFAULT_TRACK_TURN_ON_VOLUME = True
 
 

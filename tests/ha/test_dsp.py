@@ -177,7 +177,7 @@ def _turn_on_writes(sim: AmsSimulator) -> list[str]:
 
 
 class TestTurnOnVolumeTracking:
-    """FR-12. Replaces the Control4 behaviour that makes zones resume where they were left.
+    """FR-12. Replaces the vendor behaviour that makes zones resume where they were left.
 
     The cooldown is patched down rather than time-travelled. ``Debouncer`` schedules with
     ``hass.loop.call_later``, which runs on the event loop's own clock: ``async_fire_time_changed``

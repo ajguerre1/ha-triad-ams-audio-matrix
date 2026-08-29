@@ -43,7 +43,7 @@ class TestCommandFraming:
         assert p.disconnect_output(AMS24, 1) == bytes.fromhex("FF5504031D0018")
 
     def test_the_mute_query_uses_the_length_byte_that_actually_works(self) -> None:
-        """The Control4 driver's own constant declares 03 here, and the device rejects it.
+        """The vendor driver's own constant declares 03 here, and the device rejects it.
 
         Captured: FF55030317F500 -> 'Command error'; FF55040317F500 -> the mute status.
         """
@@ -164,9 +164,9 @@ class TestResponseParsing:
         assert p.parse_audio_sense("AudioSense:Input[0]: 1 $") == (1, True)
 
     def test_the_off_delay_is_hex_and_measured_in_minutes(self) -> None:
-        """Captured 2026-08-29. 0x1 is the 1-minute default the owner confirms, not one second.
+        """Captured 2026-08-29. 0x1 is the 1-minute default the maintainer confirms, not one second.
 
-        Worth pinning because the Control4 driver initialises this field to 30, which on a
+        Worth pinning because the vendor driver initialises this field to 30, which on a
         minutes scale is half an hour rather than half a minute.
         """
         assert p.parse_audio_sense_off_delay("Get Analog nosignal sleep timeout : 0x1") == 1
@@ -212,7 +212,7 @@ class TestResponseParsing:
 class TestAudioSenseSetters:
     """FR-14. The wire format comes from `ariel_protocol.lua`, not from guesswork.
 
-    Both were reachable all along; they were withheld while Control4 re-asserted its own value on
+    Both were reachable all along; they were withheld while the vendor re-asserted its own value on
     every reconnect, which made a control that appeared to work and silently reverted.
     """
 
@@ -304,7 +304,7 @@ class TestBuildersNothingElseExercises:
 
     def test_power_is_built_though_the_integration_never_sends_it(self) -> None:
         """`media_player` on/off means routing. The device's power-on delay is long enough that the
-        Control4 driver disables the command outright, and this follows it."""
+        vendor driver disables the command outright, and this follows it."""
         assert p.query_power() == bytes.fromhex("FF55030101F5")
         assert p.set_power(on=True) == bytes.fromhex("FF5503010100")
         assert p.set_power(on=False) == bytes.fromhex("FF5503010200")
@@ -314,7 +314,7 @@ class TestBuildersNothingElseExercises:
 
     def test_the_group_commands_exist_although_no_hardware_here_uses_them(self) -> None:
         """FR-07 was withdrawn on measurement -- all seven groups are empty on all three matrices
-        and the Control4 driver never calls `setOutputToGroup`. The wire format is still correct
+        and the vendor driver never calls `setOutputToGroup`. The wire format is still correct
         and still recorded, so it stays asserted."""
         assert p.assign_output_to_group(AMS8, 1, 1) == bytes.fromhex("FF550403320000")
         assert p.query_group_volume(1) == bytes.fromhex("FF5504044 7F500".replace(" ", ""))

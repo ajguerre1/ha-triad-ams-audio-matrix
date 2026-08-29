@@ -162,7 +162,7 @@ class MatrixSpec:
 #:
 #: **An AMS16 used to be here and was removed 2026-08-29.** It was never measured and never
 #: sourced: it entered through the design doc and propagated into this table, the README and the
-#: protocol reference. The guide names two models, and the two Control4 driver archives are AMS8
+#: protocol reference. The guide names two models, and the two vendor driver archives are AMS8
 #: and AMS24. Offering it let someone configure a channel count no hardware has, which this file
 #: exists to prevent -- ``for_model`` refuses an unknown name rather than guessing for exactly
 #: that reason, and the table was quietly undermining its own rule.

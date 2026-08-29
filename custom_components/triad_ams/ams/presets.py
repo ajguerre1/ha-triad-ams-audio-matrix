@@ -5,10 +5,10 @@ development box like everything else under ``ams/``.
 
 ## Where these came from, and what is deliberately absent
 
-These seven reproduce the generic presets the Control4 driver ships, so that a zone set to "Rock"
-under Control4 sounds the same after the changeover. That is the whole reason for matching the
+These seven reproduce the generic presets the vendor driver ships, so that a zone set to "Rock"
+under the vendor sounds the same after the changeover. That is the whole reason for matching the
 values rather than inventing equivalents: the point of this integration is that decommissioning
-Control4 costs no capability, and "your presets now sound different" would be a cost.
+the vendor costs no capability, and "your presets now sound different" would be a cost.
 
 They are also unremarkable as EQ curves — five bands on standard ISO centres, integer gains, the
 smiley-face and genre shapes every consumer device has shipped for decades.

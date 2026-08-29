@@ -1,159 +1,203 @@
 # Triad AMS Audio Matrix — Home Assistant integration
 
-Local control of **Triad TS-AMS8 and TS-AMS24** audio matrix switches over TCP, with no
-cloud, no polling of a vendor API, and no Control4 controller required.
+Control your Triad audio matrix from Home Assistant. Choose what plays in each room, set the
+volume, mute a zone, and adjust the sound — all from your dashboards and automations.
 
-> **Status: 1.0, in use.** Verified against live hardware — an AMS8 on firmware `V1.05.74` and two
-> AMS24s on `V1.06.84` — and driving them in a production Home Assistant instance. The test suite
-> is 341 tests over 1936 statements at 100% coverage, run against a device simulator in CI.
->
-> 1.0 waited on one thing: proving the Control4 controller could be taken out of the audio path
-> without losing anything. That was measured on 2026-08-29 across all 27 zones — see
-> [Replacing a Control4 controller](#replacing-a-control4-controller).
+Works entirely on your own network. No cloud account, no internet connection, and no separate
+controller required.
 
-## What it exposes
+**Supported models:** TS-AMS8 and TS-AMS24.
 
-The hardware does considerably more than route audio, and this integration aims to surface all of
-it rather than just the parts a media player needs.
+## What you get
 
-| Platform | Per | What |
+Each audio zone appears in Home Assistant as a media player, so it works with the standard cards,
+voice assistants and automations you already use.
+
+| In Home Assistant | For each | What you can do |
 |---|---|---|
-| `media_player` | output | Source select, volume, mute, on/off |
-| `number` | output | Bass, treble, balance, EQ band gain ×5 |
-| `number` | input | Input gain |
-| `number` | matrix | Audio-sense off delay |
-| `select` | output | EQ band frequency ×5, EQ band Q ×5 |
-| `switch` | output | Loudness, mono sum |
-| `switch` | matrix | 12 V trigger banks, ASG trigger, audio sense |
-| `binary_sensor` | input | Input audio |
-| `sensor` | matrix | Firmware, addressing |
-| `sensor` | output | Turn-on volume, when tracking is enabled |
+| Media player | Zone | Pick the source, change volume, mute, turn the zone on or off |
+| Number | Zone | Bass, treble, balance, and five bands of equaliser |
+| Number | Source | Input level, so sources match each other in loudness |
+| Select | Zone | Equaliser frequency and width |
+| Switch | Zone | Loudness, mono |
+| Switch | Matrix | 12 V amplifier triggers, audio detection |
+| Sensor | Zone / matrix | Start-up volume, firmware version, network setting |
 
-EQ frequency and Q are `select` rather than `number` because the device takes them as indices into
-fixed tables — 31 frequencies and 8 Q values — not as continuous quantities. Offering a slider
-would invent precision the hardware does not have.
+Only the media players are switched on to begin with. A 24-zone matrix could add several hundred
+items to Home Assistant, and most homes do not want that. Everything else is available but hidden
+until you turn it on — see [Turning on the extra controls](#turning-on-the-extra-controls).
 
-Everything beyond `media_player` is **disabled by default**. A 24×24 matrix would otherwise add
-several hundred entities to the recorder on first setup; enable the ones you need per zone.
+### Handy extras
 
-### Services
+Three actions are available to automations and scripts:
 
-| Service | Target | What |
+| Action | What it does |
+|---|---|
+| Set equaliser band | Change one band's frequency, level and width together |
+| Apply equaliser preset | Flat, Rock, Pop, Jazz, Classical, High Pass or Low Pass in one step |
+| Send command | For advanced troubleshooting. Read-only unless you explicitly allow changes |
+
+## What each model has
+
+Sources connect differently depending on the model, and the setup screen labels each one so you
+know which socket you are enabling.
+
+| | Sources | Zones |
 |---|---|---|
-| `triad_ams.set_eq_band` | `media_player` | Frequency, gain and Q of one band in a single write |
-| `triad_ams.apply_eq_preset` | `media_player` | All five bands at once — Flat, Rock, Pop, Jazz, Classical, High Pass, Low Pass |
-| `triad_ams.send_raw` | device | Send an arbitrary command; refuses anything without the `F5` query marker unless `allow_write` is set |
+| **TS-AMS8** | 1–4 analog · **5–8 analog *or* digital** | 1–8 |
+| **TS-AMS24** | 1–16 analog · 17–24 digital | 1–24 |
 
-`set_eq_band` exists because a band is three parameters across three entities. Setting them
-individually costs three round trips and leaves the filter in two intermediate shapes on the way.
+On a TS-AMS8, sources 5–8 are printed twice on the back of the unit — once under the analog
+sockets and once under the digital ones. They are the same four sources. Each one takes analog
+**or** digital, not both, so the unit has eight sources in total and not twelve.
 
-### Options
+## Before you start
 
-Per-output **maximum volume** is a config option rather than an entity — a ceiling that a user can
-raise from a dashboard is not a ceiling. Also configurable: the poll interval, and whether the
-integration tracks turn-on volume the way a Control4 controller does (on by default; switching it
-off replaces the read-only `sensor` with a writable `number`).
-
-## Requirements
+You will need:
 
 - Home Assistant 2026.8.0 or newer
-- A Triad AMS matrix reachable on your LAN, TCP port 52000
-- The matrix's model — there is no command that reports it, so you choose it during setup
+- Your matrix connected to the same network as Home Assistant
+- The matrix's IP address
+- To know which model you have — the unit does not report this, so you choose it during setup
 
-### What each model has
+**Tip:** give the matrix a fixed IP address in your router. If its address changes, Home Assistant
+will lose contact with it until you update the setting.
 
-| | Inputs | Outputs |
-|---|---|---|
-| **TS-AMS8** | 1–4 analog · **5–8 analog *or* digital**, one connector pair each | 1–8 analog |
-| **TS-AMS24** | 1–16 analog · 17–24 digital | 1–24 analog |
+## Installing
 
-The setup form names each channel accordingly — *Input 5 (Analog/Digital Shared)*, *Input 17
-(Digital)*, *Output 1 (Analog)* — because the index alone does not tell you which socket it is.
-Input 5 is a shared pair on an AMS8 and plain analog on an AMS24.
+### Using HACS (recommended)
 
-The AMS8's inputs 5–8 appear twice on its back panel, once under ANALOG AUDIO INPUTS and once
-under DIGITAL AUDIO INPUTS. They are the same four inputs: each takes analog *or* digital, not
-both, so an AMS8 has eight inputs and not twelve.
+1. In Home Assistant, open **HACS**
+2. Select the menu (⋮) and choose **Custom repositories**
+3. Paste `https://github.com/ajguerre1/ha-triad-ams-audio-matrix` and choose the **Integration**
+   category
+4. Find **Triad AMS Audio Matrix** in the list and select **Download**
+5. Restart Home Assistant
+6. Go to **Settings → Devices & Services → Add Integration** and search for
+   **Triad AMS Audio Matrix**
+7. Enter the matrix's IP address and choose your model
+8. Tick the zones and sources you actually use, then finish
 
-## Installation
+Only tick what is connected. Empty zones and unused sources clutter every dropdown in Home
+Assistant from then on, and you can change the selection later at any time.
 
-### HACS (recommended)
+### Installing by hand
 
-1. HACS → Integrations → ⋮ → **Custom repositories**
-2. Add `https://github.com/ajguerre1/ha-triad-ams-audio-matrix`, category **Integration**
-3. Install, then restart Home Assistant
-4. Settings → Devices & Services → **Add Integration** → *Triad AMS Audio Matrix*
+Copy the `custom_components/triad_ams` folder into your Home Assistant `config/custom_components`
+folder, restart, then follow steps 6–8 above.
 
-### Manual
+## Changing your settings
 
-Copy `custom_components/triad_ams/` into your Home Assistant `config/custom_components/`
-directory and restart.
+Go to **Settings → Devices & Services**, find **Triad AMS Audio Matrix**, and choose
+**Configure**. You can change:
 
-## Coexisting with Control4 and other controllers
+- **Which zones and sources are in use** — tick or untick at any time
+- **Maximum volume per zone** — a ceiling a zone cannot be driven past, useful for a bedroom or a
+  nursery. It applies to automations and voice commands too, not only the slider
+- **How often the matrix is checked** — every 30 seconds by default
+- **Remember volume per zone** — when on, a zone comes back on at the volume it was left at
 
-These matrices are frequently installed behind a Control4 controller, which holds a persistent
-keep-alive socket to port 52000.
+### Turning on the extra controls
 
-**That is fine.** The hardware accepts multiple concurrent TCP clients — verified with three
-simultaneous connections answering correctly while a Control4 controller was connected. This
-integration does not displace an existing controller, and an existing controller does not block
-it.
+Tone, equaliser, input levels and triggers are installed but hidden, so they do not clutter your
+system unless you want them.
 
-The consequence to understand is that the matrix does **not** announce routing or volume changes.
-If another controller changes a zone, this integration finds out on its next poll, not
-immediately. That is why the integration is `local_polling` and why the poll interval is
-configurable. Changes made *through* Home Assistant are read back straight away.
+1. Go to **Settings → Devices & Services → Triad AMS Audio Matrix**
+2. Select your matrix, then **+ N entities not shown**
+3. Pick the ones you want and select **Enable**
 
-### Replacing a Control4 controller
+Turn on only the zones you plan to adjust. Each enabled zone adds regular checks against the
+matrix, so enabling everything on a 24-zone unit makes the system work considerably harder for
+controls you may never touch.
 
-Coexistence is the safe default, but the harder question is what you lose by switching the
-controller off. Read against the driver's Lua, Control4 maintains exactly three things beyond
-issuing commands: a debounce on routing, turn-on volume tracked as the volume a zone was left at,
-and a state resync that overwrites the device on every reconnect. The first two are reproduced
-here — a 250 ms leading-edge debounce on route changes, and optional turn-on volume tracking. The
-third is deliberately not: overwriting hardware state because a socket reconnected is a behaviour
-worth losing.
+## Uninstalling
 
-**Verified 2026-08-29 with the Control4 drivers disconnected from all three matrices**: every one
-of 27 zones was exercised from Home Assistant — volume, turn-on register, routing to two different
-sources, volume change while playing, mute, unmute, off — and all 27 passed every check. Each
-assertion was made against the matrix over a separate TCP socket rather than against Home
-Assistant, so a write that never reached the hardware could not have passed. Zero warnings or
-errors in the integration log for the run.
+**Your settings are kept unless you remove the integration itself**, so you can safely reinstall
+or update without setting everything up again.
 
-One caveat worth stating plainly: the controller itself remained powered, with only its Triad
-drivers stopped. That is the audio-relevant state, not a full power-down.
+To remove it completely:
 
-**If you try this, know that a zone comes on at its turn-on register.** Ours read 0.0 dB — full
-output — on 23 of 27 zones, so routing a source without lowering that register first would have
-brought those zones up at maximum. Lower it, read it back off the device to confirm, and only then
-route. The register also has a read-after-write race: a read issued immediately after the write can
-return the old value, so let it settle before believing it.
+1. Go to **Settings → Devices & Services**
+2. Find **Triad AMS Audio Matrix**, select the menu (⋮) on the entry, and choose **Delete**
+3. In **HACS**, find the integration and choose **Remove**
+4. Restart Home Assistant
 
-## Protocol
+Deleting the entry in step 2 removes its zones from Home Assistant, along with any dashboard cards
+and automations that referred to them. **The matrix itself is not changed** — whatever was playing
+carries on playing, and volumes stay where they are.
 
-The control protocol is documented in **[docs/triad-ams-protocol.md](docs/triad-ams-protocol.md)** —
-command framing, the full opcode table, every response string, the firmware quirks, and the
-errors in the vendor documentation.
+To step away temporarily instead, use **Disable** rather than **Delete**. That stops Home
+Assistant contacting the matrix but keeps all your settings.
 
-It was reconstructed from two sources: live capture against real hardware (an AMS8 on firmware
-`V1.05.74` and two AMS24s on `V1.06.84`), and the Control4 driver's Lua. Where they disagree, the
-capture wins — and they do disagree, in at least one place that costs an afternoon to find.
+## Troubleshooting
+
+### It cannot find the matrix during setup
+
+- Check the IP address is correct and the matrix is switched on
+- Confirm Home Assistant can reach it — they must be on the same network, and some networks
+  separate guest or smart-home devices from each other
+- The matrix uses port 52000. If you run a firewall between them, allow it
+
+### Zones show as unavailable
+
+Home Assistant has lost contact with the matrix. The usual causes are the matrix being switched
+off, a network problem, or its IP address having changed. Contact is restored automatically once
+the matrix is reachable again — no restart needed.
+
+### A zone comes on much louder than expected
+
+**Each zone has its own start-up volume**, stored in the matrix, and a zone comes on at that level
+rather than at whatever it was set to last. On a new or reset unit this is often maximum.
+
+Two ways to deal with it:
+
+- Turn on **Remember volume per zone** in the settings, so a zone comes back at the level it was
+  left at
+- Set a **maximum volume** for that zone in the settings, which it cannot be driven past
+
+### A change I made elsewhere is slow to appear
+
+If something else on your network changes the matrix — a wall keypad, another app — Home Assistant
+finds out on its next check rather than straight away, because the matrix does not announce
+changes. You can shorten the interval in the settings. Changes you make *through* Home Assistant
+appear immediately.
+
+### The sound is right but the volume numbers look odd
+
+Volume is shown as a percentage, but the matrix works in decibels, and decibels are not a straight
+line. 50% is much quieter than half as loud. This is normal and matches how the matrix reports
+itself.
+
+### Getting help
+
+Open an issue at
+[github.com/ajguerre1/ha-triad-ams-audio-matrix/issues](https://github.com/ajguerre1/ha-triad-ams-audio-matrix/issues).
+
+Please attach the diagnostics file — go to **Settings → Devices & Services → Triad AMS Audio
+Matrix**, select the menu (⋮) and choose **Download diagnostics**. It describes what the
+integration can see and **has your network address and hardware identifiers removed**, so it is
+safe to attach to a public issue.
+
+## Technical reference
+
+The control protocol is documented in
+[docs/triad-ams-protocol.md](docs/triad-ams-protocol.md) for anyone building against the same
+hardware.
 
 ## Credits
 
-Independent implementation, not a fork. [`bharat/homeassistant-triad-ams`](https://github.com/bharat/homeassistant-triad-ams)
-was read as a reference and deserves credit for two hard-won findings that are reproduced here
-with acknowledgement: that some firmware pads response frames to 150 bytes with NULs, which
-desyncs a naive reader, and that the device returns empty frames intermittently on healthy
-connections and must not be disconnected when it does.
+An independent implementation, not a fork.
+[`bharat/homeassistant-triad-ams`](https://github.com/bharat/homeassistant-triad-ams) was read as a
+reference and deserves credit for two findings reproduced here: that some firmware pads its replies
+with filler, which confuses a naive reader, and that the unit occasionally sends an empty reply on
+a perfectly healthy connection and should not be disconnected when it does.
 
 ## Trademarks
 
-**Triad** and the Triad logo are trademarks of their owner. This project is independent and is
-**not affiliated with, endorsed by, or supported by Triad**.
+**Triad** and the Triad logo are trademarks of their respective owners. This project is independent
+and is **not affiliated with, endorsed by, or supported by** the manufacturer.
 
-The logo appears here only to identify which product the integration works with, which is what an
+The logo appears only to identify which product the integration works with, which is what an
 integration icon is for in Home Assistant. The artwork remains the property of its owner.
 
 ## Licence

@@ -165,7 +165,7 @@ class TriadOutputMediaPlayer(TriadOutputEntity, MediaPlayerEntity):
         """Disconnect the output. This is routing, not mains power.
 
         The matrix's own power-off is never sent -- its power-on delay is long enough that the
-        Control4 driver disables the command outright, and a zone that takes tens of seconds to
+        vendor driver disables the command outright, and a zone that takes tens of seconds to
         come back is not an off switch anyone wants on a dashboard.
         """
         if (snapshot := self.snapshot) is not None and snapshot.source is not None:

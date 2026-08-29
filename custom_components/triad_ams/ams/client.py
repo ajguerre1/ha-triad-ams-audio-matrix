@@ -293,7 +293,7 @@ class AmsClient:
     async def set_audio_sense_enabled(self, *, enabled: bool) -> None:
         """Turn audio-sense measuring on or off for the whole matrix.
 
-        Only durable with a single controller. The Control4 driver re-asserted its own value on
+        Only durable with a single controller. The vendor driver re-asserted its own value on
         every reconnect, which is why this was withheld until decommissioning (FR-14).
         """
         await self.send_bursty(p.set_audio_sense_enabled(enabled=enabled))

@@ -71,7 +71,7 @@ async def _turn_on_registers(coordinator: Any) -> dict[str, int | None]:
     """Read every active output's turn-on register, live.
 
     **A zone comes on at this register, not at the volume it was left at**, and measured across a
-    live installation on 2026-08-29 it read step 100 -- 0.0 dB, full output -- on 23 of 27 zones.
+    live installation on 2026-08-29 it read step 100 -- 0.0 dB, full output -- on most zones.
 
     It is read here rather than taken from the snapshot because the snapshot usually does not have
     it: ``state.dsp`` is populated only for outputs with a DSP consumer, and DSP entities ship

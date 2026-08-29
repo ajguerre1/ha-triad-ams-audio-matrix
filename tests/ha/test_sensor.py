@@ -46,7 +46,7 @@ async def test_firmware_is_reported(hass: HomeAssistant, simulator: AmsSimulator
 async def test_the_off_delay_is_reported_in_minutes(
     hass: HomeAssistant, simulator: AmsSimulator
 ) -> None:
-    """The device's own unit. It answers 0x1 for the one-minute default, and the Control4
+    """The device's own unit. It answers 0x1 for the one-minute default, and the vendor
     driver's initialiser of 30 is thirty minutes on this scale, not thirty seconds."""
     simulator.state.audio_sense_off_delay = 1
     await _setup(hass, simulator, enable=[DELAY])
@@ -60,7 +60,7 @@ async def test_the_addressing_mode_is_reported(
 ) -> None:
     """FR-17, renamed on measurement.
 
-    The Control4 driver calls this command ``getIpAddress``, but both real units answer the
+    The vendor driver calls this command ``getIpAddress``, but both real units answer the
     literal ``dynamic_ip`` -- the addressing mode, with no address in it. The entity is named for
     what the hardware returns rather than for the driver's constant.
     """

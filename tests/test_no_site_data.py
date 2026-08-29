@@ -1,6 +1,6 @@
 """Static guarantee that no site data reaches this public repository.
 
-An audio matrix stores the owner's information and hands it back on every poll: the output names
+An audio matrix stores personal information and hands it back on every poll: the output names
 are room names, the input names are source names, and the system queries return the LAN address
 and MAC. Any of it committed here is published, permanently, to a public repo that auto-pushes.
 

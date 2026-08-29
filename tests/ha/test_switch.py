@@ -137,7 +137,7 @@ AUDIO_SENSE = "switch.test_matrix_audio_sense"
 
 
 class TestAudioSenseSwitch:
-    """FR-14. Withheld until Control4 stopped re-asserting its own value on every reconnect."""
+    """FR-14. Withheld until the vendor stopped re-asserting its own value on every reconnect."""
 
     async def test_it_turns_measuring_on_and_off(
         self, hass: HomeAssistant, simulator: AmsSimulator

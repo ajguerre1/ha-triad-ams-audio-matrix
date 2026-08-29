@@ -179,7 +179,7 @@ class TestFaults:
 
 class TestAudioSense:
     async def test_a_matrix_that_is_not_measuring_reports_no_reading(self) -> None:
-        """Every matrix in the reference installation ships like this.
+        """Every matrix in the measured units ships like this.
 
         The device answers 2 for every input, and a live input is indistinguishable from a dead
         one. None -- not False -- is the only honest answer.

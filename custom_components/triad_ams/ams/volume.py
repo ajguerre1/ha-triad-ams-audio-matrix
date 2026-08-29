@@ -4,7 +4,7 @@ The matrix is asymmetric: it is *set* with a step in ``0x00``--``0x64`` but *rep
 figure. The mapping between them is a measured taper, not a formula, so the only faithful
 conversion is the manufacturer's own table.
 
-The table below is transcribed from ``g_dbVolMap`` in the Control4 driver's ``driver.lua`` --
+The table below is transcribed from ``g_dbVolMap`` in the vendor driver's ``driver.lua`` --
 101 points, one per step. It is reproduced rather than approximated because a fitted curve would
 disagree with the hardware in the middle of the range, where listening actually happens.
 

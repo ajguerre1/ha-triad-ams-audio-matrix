@@ -128,7 +128,7 @@ class TriadConfigFlow(ConfigFlow, domain=DOMAIN):
     ) -> ConfigFlowResult:
         """Choose which outputs and inputs are actually wired up.
 
-        A 24x24 matrix in a house rarely has all 24 of either in use, and an entity per unused
+        A 24x24 matrix rarely has all 24 of either in use, and an entity per unused
         channel is noise in every picker for the life of the installation.
         """
         outputs = self._data[CONF_OUTPUT_COUNT]

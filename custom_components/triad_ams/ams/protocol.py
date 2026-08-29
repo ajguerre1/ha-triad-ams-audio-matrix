@@ -145,7 +145,7 @@ def set_output_mute(spec: MatrixSpec, output: int, *, mute: bool) -> bytes:
 def query_output_mute(spec: MatrixSpec, output: int) -> bytes:
     """Note the 0x04 length byte that ``_query_out`` produces.
 
-    The Control4 driver's ``getOutputMutePrefix`` constant declares 0x03 here and the device
+    The vendor driver's ``getOutputMutePrefix`` constant declares 0x03 here and the device
     answers 'Command error'. The driver's own diagnostics routine uses 0x04, which works.
     """
     return _query_out(spec, 0x17, output)
@@ -360,7 +360,7 @@ def query_power() -> bytes:
 def set_power(*, on: bool) -> bytes:
     """Only power-on is ever useful.
 
-    The Control4 driver disables power-off entirely, commenting that the device's power-on delay
+    The vendor driver disables power-off entirely, commenting that the device's power-on delay
     is too long to handle. This integration follows that: ``media_player`` on/off controls
     routing, not mains power.
     """
@@ -378,7 +378,7 @@ def query_mac_address() -> bytes:
 def query_ip_mode() -> bytes:
     """Ask whether the unit takes its address from DHCP or holds a static one.
 
-    **This does not return an address**, despite the Control4 driver naming its constant
+    **This does not return an address**, despite the vendor driver naming its constant
     ``getIpAddress``. Measured 2026-08-29 against an AMS8 on V1.05.74 and an AMS24 on V1.06.84:
     both answer the literal string ``dynamic_ip``, with no address in it. Named for what it
     returns rather than for the driver's constant, which promises something it does not deliver.
@@ -581,7 +581,7 @@ def parse_audio_sense(text: str) -> tuple[int, bool | None]:
 
     ``2`` returns ``None`` rather than ``False`` deliberately. ``False`` would assert "there is no
     audio", which the device has not determined and cannot; ``None`` says "no reading", which the
-    entity layer renders as unavailable. The Control4 driver collapses this to a boolean, which is
+    entity layer renders as unavailable. The vendor driver collapses this to a boolean, which is
     safe for it because it only ever acts on ``1``.
     """
     m = _match(r"AudioSense:Input\[(\d+)\]\s*:\s*(\d+)", text, "audio sense")
@@ -594,7 +594,7 @@ def parse_audio_sense_off_delay(text: str) -> int:
     """``Get Analog nosignal sleep timeout : 0x1`` -> ``1``.
 
     The value is hex-formatted and the unit is **minutes**: hardware reporting ``0x1`` is the
-    1-minute default. The Control4 driver initialises this field to 30, which on this scale is
+    1-minute default. The vendor driver initialises this field to 30, which on this scale is
     thirty minutes rather than the half-minute the number suggests.
     """
     m = _match(r"nosignal sleep timeout\s*:\s*(?:0x)?([0-9A-Fa-f]+)", text, "audio sense delay")

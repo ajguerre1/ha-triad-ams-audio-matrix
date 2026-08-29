@@ -1,7 +1,7 @@
 """The device sets volume in steps and reports it in decibels, so the two must round-trip.
 
 The curve is not linear and not invertible by formula -- it is a 101-point table lifted from the
-Control4 driver's ``g_dbVolMap``. These tests pin the properties that matter at the boundaries,
+vendor driver's ``g_dbVolMap``. These tests pin the properties that matter at the boundaries,
 where a plausible-looking implementation goes wrong quietly.
 """
 

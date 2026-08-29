@@ -132,8 +132,8 @@ class TestDiagnosticsRedaction:
 class TestTurnOnRegisterIsObservable:
     """AV-21: a zone comes on at its turn-on register, and nothing surfaced that register.
 
-    Measured 2026-08-29 across a live installation: the register read **step 100 -- 0.0 dB, full
-    output -- on 23 of 27 zones**. Routing a source to one of those brings it up at maximum,
+    Measured 2026-08-29 on real hardware: the register read **step 100 -- 0.0 dB, full
+    output -- on most zones**. Routing a source to one of those brings it up at maximum,
     whatever volume was set beforehand.
 
     It was invisible. There is no enabled entity for it by default, and `state.dsp` is populated

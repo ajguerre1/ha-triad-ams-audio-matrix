@@ -118,9 +118,9 @@ class TestNeverWritesOnConnect:
     ) -> None:
         """Pins design decision D-05, and it is not a stylistic one.
 
-        The Control4 driver pushes its cached state to the matrix on every reconnect, writing
+        The vendor driver pushes its cached state to the matrix on every reconnect, writing
         every output. That is correct for the only controller and destructive for a second one:
-        a Home Assistant restart would overwrite whatever Control4 had just set, across all
+        a Home Assistant restart would overwrite whatever the vendor had just set, across all
         56 outputs, with values Home Assistant happened to be holding.
         """
         await _setup(hass, simulator)

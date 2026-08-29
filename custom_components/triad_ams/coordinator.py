@@ -1,7 +1,7 @@
 """Polling coordinator for one matrix.
 
 Polling rather than pushing is forced by the hardware: the matrix announces nothing except
-audio-sense events, and these matrices commonly share a LAN with a Control4 controller that
+audio-sense events, and these matrices commonly share a LAN with another controller that
 changes routing and volume independently. Home Assistant finds out on the next poll.
 
 Two decisions worth stating:
@@ -35,13 +35,13 @@ _LOGGER = logging.getLogger(__name__)
 #: How long to wait for the socket to close during unload. Home Assistant blocks on this.
 SHUTDOWN_TIMEOUT = 5.0
 
-#: Routing commands are coalesced over this window, matching the Control4 driver's own 250 ms.
+#: Routing commands are coalesced over this window, matching the vendor driver's own 250 ms.
 #: Honest about its value: Home Assistant's `select_source` is a discrete choice, not a scroll, so
 #: this is insurance against a looping automation rather than a fix for observed behaviour.
 ROUTE_DEBOUNCE_SECONDS = 0.25
 
 #: How long a volume must settle before it is stored as the zone's turn-on volume. Matches the
-#: Control4 driver's own 10 s, which exists so dragging a slider does not write fifty times.
+#: vendor driver's own 10 s, which exists so dragging a slider does not write fifty times.
 TURN_ON_VOLUME_DEBOUNCE_SECONDS = 10.0
 
 #: How many extra reads to spend confirming a routing write landed, and how far apart.
@@ -586,7 +586,7 @@ class TriadCoordinator(DataUpdateCoordinator[MatrixSnapshot]):
         pre-write state -- an ordering inversion that is silent, because the value it returns is
         entirely plausible, just stale.
 
-        **Leading, not trailing** (``immediate=True``). Control4 debounces on the trailing edge
+        **Leading, not trailing** (``immediate=True``). the vendor debounces on the trailing edge
         because its UI streams a route command per scroll step; Home Assistant's ``select_source``
         is a discrete choice, so waiting 250 ms before acting on it would make a synchronous
         operation asynchronous for no benefit -- and a caller that checked the state straight
@@ -688,7 +688,7 @@ class TriadCoordinator(DataUpdateCoordinator[MatrixSnapshot]):
         # Debouncer holding its function -- a closure over this coordinator, and through it the
         # client and its socket. Home Assistant added shutdown precisely to release that
         # (core#137237). This integration reloads on every options change, so cancelling alone
-        # would leave a coordinator reachable for each edit the owner ever makes.
+        # would leave a coordinator reachable for each edit the maintainer ever makes.
         for debouncer in (*self._route_debouncers.values(), *self._turn_on_debouncers.values()):
             debouncer.async_shutdown()
         self._route_debouncers.clear()

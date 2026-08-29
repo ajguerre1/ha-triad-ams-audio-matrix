@@ -80,7 +80,7 @@ class TriadFirmwareSensor(TriadDiagnosticSensor):
 class TriadAddressingSensor(TriadDiagnosticSensor):
     """Whether the matrix takes its address from DHCP or holds a static one.
 
-    **Not the address itself.** The Control4 driver calls this command ``getIpAddress``, but
+    **Not the address itself.** The vendor driver calls this command ``getIpAddress``, but
     measured on two units across two firmware revisions it answers the literal ``dynamic_ip`` --
     the mode, with no address in it. The entity is named for what the hardware returns.
 
@@ -104,7 +104,7 @@ class TriadTurnOnVolumeSensor(TriadOutputDspEntity, SensorEntity):
 
     Exists only when ``track_turn_on_volume`` is on. In that mode the integration rewrites this
     register whenever a zone's volume settles, so offering it as something the user can type into
-    would be offering a value that changes back -- which is exactly the confusion Control4 causes
+    would be offering a value that changes back -- which is exactly the confusion the vendor causes
     today, and the thing FR-12 is meant to end rather than reproduce.
 
     Turn tracking off and this disappears, replaced by a writable `number`.

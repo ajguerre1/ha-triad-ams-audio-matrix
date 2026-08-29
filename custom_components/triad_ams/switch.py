@@ -89,7 +89,7 @@ class TriadLoudnessSwitch(TriadDspSwitch):
 class TriadMonoSwitch(TriadDspSwitch):
     """Mono-summing on one output.
 
-    Worth knowing what this does in practice: the Control4 driver forces it on for the slave of a
+    Worth knowing what this does in practice: the vendor driver forces it on for the slave of a
     2.1 pair, so a zone reading `on` here may be half of a pairing configured elsewhere rather
     than a choice made in Home Assistant.
     """
@@ -191,7 +191,7 @@ class TriadAudioSenseSwitch(TriadEntity, SwitchEntity):
     state and changes it is strictly better than one that only shows it, and having both would put
     the same value in two places.
 
-    **This was withheld until Control4 was on its way out (FR-14).** The driver re-asserts its own
+    **This was withheld until the vendor was on its way out (FR-14).** The driver re-asserts its own
     value on every reconnect, so under coexistence this switch would have appeared to work and
     silently reverted -- worse than no switch. With a single writer the device value is durable.
 
@@ -217,7 +217,7 @@ class TriadAudioSenseSwitch(TriadEntity, SwitchEntity):
     def available(self) -> bool:
         """Unavailable until actually read, rather than defaulting to off.
 
-        Off is a meaningful state here -- it is what every matrix in the reference installation
+        Off is a meaningful state here -- it is what every matrix in the measured units
         ships as -- so showing it before it has been read would be asserting the common case
         rather than reporting one.
         """

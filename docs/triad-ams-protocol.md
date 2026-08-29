@@ -1,13 +1,13 @@
 # Triad AMS control protocol
 
 Reference for the TCP control protocol spoken by the Triad TS-AMS8 and TS-AMS24 audio
-matrix switches (Hansong "Ariel" platform, also sold under the Control4 label).
+matrix switches (Hansong "Ariel" platform, also sold under other labels).
 
 Two sources, in order of authority:
 
 1. **Live capture** against real hardware — an AMS8 on firmware `V1.05.74` and two AMS24s on
    `V1.06.84`. Every response string quoted below was observed, not inferred.
-2. **The Control4 driver** `triad_ams8.c4z` / `triad_ams24.c4z` (Control4 3.4.3), specifically
+2. **The vendor driver** `triad_ams8 archive` / `triad_ams24 archive` (the vendor 3.4.3), specifically
    `ariel_protocol.lua` for the command table and `driver.lua` for response handling and the dB
    volume curve. The two archives contain **byte-identical Lua**; the models differ only in
    `audio_provider_count` / `audio_consumer_count` in `driver.xml`. One implementation covers all.
@@ -27,9 +27,9 @@ Where the two disagree, the capture wins. It disagrees in at least one place —
 | Response | **ASCII text, terminated by `0x00`** |
 | Concurrent clients | **Supported** — three simultaneous sockets were verified answering correctly |
 
-Concurrency matters: these matrices are commonly driven by a Control4 controller holding a
+Concurrency matters: these matrices are commonly driven by another controller holding a
 persistent keep-alive socket. An additional client does not displace it, so Home Assistant can
-coexist with an existing control system. This was verified with Control4 connected throughout.
+coexist with an existing control system. This was verified with the vendor connected throughout.
 
 ### Request framing
 
@@ -156,7 +156,7 @@ Responses report **human units**, not the raw index: `Get Out[1] Band 1 Freq : 6
 
 #### Frequency — index 0–30, ISO 1/3-octave
 
-The endpoints are documented in the Control4 driver: `0x00` is 20 Hz, `0x1E` (30) is 20 kHz. 31
+The endpoints are documented in the vendor driver: `0x00` is 20 Hz, `0x1E` (30) is 20 kHz. 31
 steps across that span is exactly the ISO 1/3-octave series, and every frequency observed on real
 hardware is a member of it:
 
@@ -196,7 +196,7 @@ to reject.
 | Audio-sense off delay | `FF 55 04 0A A3 00 <delay>` | echo |
 | Off-delay query | `FF 55 04 0A A3 F5 00` | `Get Analog nosignal sleep timeout : 0x1` |
 
-Input gain is sent doubled (`value * 2`) per the Control4 driver.
+Input gain is sent doubled (`value * 2`) per the vendor driver.
 
 #### Audio sense values — measured 2026-08-29
 
@@ -206,7 +206,7 @@ Input gain is sent doubled (`value * 2`) per the Control4 driver.
 | `1` | Signal present |
 | `0` | No signal |
 
-`2` is the value the Control4 driver never documents, because it only ever tests for `1`. With the
+`2` is the value the vendor driver never documents, because it only ever tests for `1`. With the
 feature disabled, every input answers `2` whether or not audio is flowing — confirmed against an
 input carrying live music, which read `2` over eight samples, identical to a dead input.
 
@@ -214,8 +214,8 @@ With sense enabled the values become a clean `0`/`1`, and `2` disappears entirel
 all 56 inputs across three matrices with sense on returned only `0` and `1`. That is the strongest
 form of the evidence — the value is not a rare signal state, it is the absence of measurement.
 
-*(The reference installation originally shipped with sense disabled on all three matrices. It was
-enabled in the Control4 driver on 2026-08-29, which is the only place the setting survives a
+*(The measured units originally shipped with sense disabled on all three matrices. It was
+enabled in the vendor driver on 2026-08-29, which is the only place the setting survives a
 sync.)*
 
 #### Enabling audio sense returns a burst, not one frame
@@ -246,9 +246,9 @@ FF 55 04 0A A3 00 <n>        set
 
 The response names it for what it is: an *analog no-signal sleep timeout*. It reads back as a raw
 hex value, and **the unit is minutes** — hardware reporting `0x1` corresponds to the 1-minute
-default the owner confirms, not to one second.
+default the maintainer confirms, not to one second.
 
-That matters for anyone reading the Control4 driver, which initialises
+That matters for anyone reading the vendor driver, which initialises
 `g_arielData.audioSenseOffDelay = 30`. On this scale that is **30 minutes**, not 30 seconds. The
 value is only pushed when an installer sets it, so a driver-side default of 30 does not
 necessarily reach the device — but it is not the half-minute the number suggests.
@@ -260,7 +260,7 @@ with sense enabled and music playing. The burst goes to the socket that sent the
 
 **Still unmeasured:** whether a *transition* — audio starting or stopping while sense is enabled —
 pushes an unsolicited frame. Music played continuously throughout the window, so no transition
-occurred. The Control4 driver's receive handler is written as though it does, which is suggestive
+occurred. The vendor driver's receive handler is written as though it does, which is suggestive
 but not evidence.
 
 ### Output groups
@@ -302,7 +302,7 @@ The model must be known to address ASG correctly.
 | Network standby query | `FF 55 03 08 83 F5` | `Get AutoNetworkStandby : Disable` |
 | Network standby on / off | `FF 55 03 08 83 01` / `…83 00` | echo |
 
-The Control4 driver deliberately **never sends power-off**, commenting that the power-on delay is
+The vendor driver deliberately **never sends power-off**, commenting that the power-on delay is
 too long to handle. This integration follows that precedent: `media_player` on/off controls
 routing, not device mains power.
 
@@ -326,7 +326,7 @@ a reconnect — doing so produces a reconnect loop under load. Retry the command
 
 ## Known documentation errors
 
-**The Control4 driver's mute-query constant is wrong.** `ariel_protocol.lua` declares:
+**The vendor driver's mute-query constant is wrong.** `ariel_protocol.lua` declares:
 
 ```lua
 ariel_commands.getOutputMutePrefix = "FF55030317F5"

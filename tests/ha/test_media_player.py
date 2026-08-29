@@ -122,7 +122,7 @@ class TestExternalChanges:
     async def test_a_change_made_by_another_controller_appears_on_the_next_poll(
         self, hass: HomeAssistant, simulator: AmsSimulator
     ) -> None:
-        """The Control4 case, which is the normal case on this hardware.
+        """The the vendor case, which is the normal case on this hardware.
 
         The matrix announces nothing, so a change made elsewhere is invisible until polled. This
         is what makes the integration local_polling rather than local_push.
@@ -154,7 +154,7 @@ class TestRoutingIsCoalesced:
 
         The leading edge sends the first immediately; the rest are coalesced into a single
         trailing run carrying the *last* value. Without the debounce this is four commands, which
-        is exactly the behaviour Control4 added its own 250 ms to avoid.
+        is exactly the behaviour the vendor added its own 250 ms to avoid.
         """
         await _setup(hass, simulator)
         before = len(_route_commands(simulator))

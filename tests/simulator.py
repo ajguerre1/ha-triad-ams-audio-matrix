@@ -1,7 +1,7 @@
 """A fake Triad AMS matrix, speaking the captured protocol over a real loopback socket.
 
 This exists because the alternative is testing 24 outputs and every failure mode against
-hardware that is wired into a house. It replays the exact response grammar recorded in
+hardware that is wired into a working system. It replays the exact response grammar recorded in
 docs/triad-ams-protocol.md, including the parts that are awkward:
 
 * **Framing personality.** Real firmware differs. ``Padding.SINGLE`` terminates with one NUL;
@@ -11,7 +11,7 @@ docs/triad-ams-protocol.md, including the parts that are awkward:
 * **Injectable faults.** ``fail_next`` makes the device answer ``Command error`` or an empty
   frame, both of which real hardware emits on healthy connections.
 * **External mutation.** ``mutate()`` changes state without a command, standing in for the
-  Control4 controller that shares this device and moves things behind Home Assistant's back.
+  other controller that shares this device and moves things behind Home Assistant's back.
 
 No site data: the invented MAC is AA:BB:CC:DD:EE:FF and it listens on loopback.
 """
@@ -110,7 +110,7 @@ class MatrixState:
     outputs: int = 8
     inputs: int = 8
     firmware: str = "V1.05.74"
-    #: Off on every matrix in the reference installation, which is why every input reads 2 there.
+    #: Off on every matrix in the measured units, which is why every input reads 2 there.
     audio_sense_enabled: bool = False
     #: Inputs with signal, 1-based. Only observable when audio_sense_enabled.
     inputs_with_signal: set[int] = field(default_factory=set)

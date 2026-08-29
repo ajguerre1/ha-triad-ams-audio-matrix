@@ -9,7 +9,7 @@ The device takes a frequency as an index 0..30 and reports it as text with a uni
 
 ## Where the table comes from
 
-Two endpoints are documented in the Control4 driver: index ``0x00`` is 20 Hz and ``0x1E`` (30) is
+Two endpoints are documented in the vendor driver: index ``0x00`` is 20 Hz and ``0x1E`` (30) is
 20 kHz. That is 31 steps from 20 Hz to 20 kHz, which is exactly the ISO 1/3-octave centre
 frequencies -- there is only one such series, and it has exactly 31 members over that span.
 
