@@ -473,20 +473,32 @@ class AmsSimulator:
 
 # The taper, duplicated deliberately: importing the integration's own table would let a bug in
 # it agree with itself and pass. A test double should not share code with what it tests.
-_DB_POINTS = (
-    -108.0, -100.0, -92.7, -85.8, -79.5, -73.9, -69.0, -64.6, -61.0, -58.0,
-    -55.6, -53.9, -52.0, -50.5, -49.6, -48.7, -47.7, -46.8, -45.9, -45.0,
+#: The device's volume taper, all 101 steps, in decibels.
+#:
+#: Duplicated literally, exactly as the frequency and Q tables above are. An earlier version
+#: interpolated from twenty points on the grounds that a straight line was "close enough for a test
+#: double" -- it was not. Seventy-eight of the hundred and one steps failed to survive a
+#: step -> dB -> step round trip, so every volume assertion in this suite was being made against a
+#: curve the hardware does not have. Real firmware reports values from this table, and they
+#: round-trip exactly.
+_DB_BY_STEP = (
+    -108, -100, -92.7, -85.8, -79.5, -73.9, -69, -64.6, -61, -58,  # 0-9
+    -55.6, -53.9, -52, -50.5, -49.6, -48.7, -47.7, -46.8, -45.9, -45,  # 10-19
+    -44.1, -43.2, -42.3, -41.4, -40.6, -39.7, -38.9, -38, -37.2, -36.4,  # 20-29
+    -35.6, -34.8, -34, -33.2, -32.4, -31.7, -30.9, -30.2, -29.4, -28.7,  # 30-39
+    -28, -27.2, -26.5, -25.8, -25.1, -24.5, -23.8, -23.1, -22.5, -21.8,  # 40-49
+    -21.2, -20.5, -19.9, -19.3, -18.7, -18.1, -17.5, -16.9, -16.4, -15.8,  # 50-59
+    -15.3, -14.7, -14.2, -13.7, -13.1, -12.6, -12.1, -11.6, -11.1, -10.7,  # 60-69
+    -10.2, -9.7, -9.3, -8.9, -8.4, -8, -7.6, -7.2, -6.8, -6.4,  # 70-79
+    -6, -5.6, -5.3, -4.9, -4.6, -4.2, -3.9, -3.6, -3.3, -3,  # 80-89
+    -2.7, -2.4, -2.1, -1.8, -1.6, -1.3, -1.1, -0.9, -0.6, -0.4,  # 90-99
+    0,  # 100-100
 )  # fmt: skip
 
 
 def _db_for(step: int) -> str:
     """Report a step as the device would: decibels, and ``0`` rather than ``0.0`` at the top."""
-    if step >= 100:
-        return "0"
-    # Above step 20 a straight line is close enough for a test double; the real taper lives in
-    # ams/volume.py, and duplicating it here would let a bug in it agree with itself.
-    value = _DB_POINTS[step] if step < len(_DB_POINTS) else round(-45.0 + (step - 19) * 0.5625, 1)
-    return f"{value:g}"
+    return f"{_DB_BY_STEP[max(0, min(step, 100))]:g}"
 
 
 def _rename_output(answer: str) -> str:

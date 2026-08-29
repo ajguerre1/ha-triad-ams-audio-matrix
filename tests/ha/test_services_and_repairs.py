@@ -196,20 +196,25 @@ class TestTheRepairFixesItself:
         from homeassistant.components.repairs.issue_handler import (
             async_process_repairs_platforms,
         )
-        from homeassistant.helpers import issue_registry as issue_reg
+        from homeassistant.setup import async_setup_component
+
+        # The repairs component is not loaded by default in the test harness, and without it the
+        # flow manager this test drives does not exist at all.
+        assert await async_setup_component(hass, "repairs", {})
 
         simulator.state.audio_sense_enabled = False
         entry = await _setup(hass, simulator, enable=[SENSE_1])
 
         issue_id = f"{ISSUE_AUDIO_SENSE_DISABLED}_{entry.entry_id}"
-        registry = issue_reg.async_get(hass)
+        registry = ir.async_get(hass)
         assert registry.async_get_issue(DOMAIN, issue_id) is not None, "the issue was never raised"
 
         await async_process_repairs_platforms(hass)
-        flow = await hass.data["repairs_flow_manager"].async_create_flow(
+        manager = hass.data["repairs_flow_manager"]
+        flow = await manager.async_create_flow(
             issue_id, data={"entry_id": entry.entry_id}, context={"source": "user"}
         )
-        result = await hass.data["repairs_flow_manager"].async_configure(flow["flow_id"], {})
+        result = await manager.async_configure(flow["flow_id"], {})
         await hass.async_block_till_done()
 
         assert result["type"] == "create_entry"
