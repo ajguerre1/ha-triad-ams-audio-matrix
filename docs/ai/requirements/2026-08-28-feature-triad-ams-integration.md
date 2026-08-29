@@ -37,7 +37,10 @@ interface, outside Home Assistant entirely, and are therefore invisible to autom
   volume, 5-band EQ, loudness, mono-sum
 - Expose per-input gain and audio-sense
 - Expose the 12 V trigger banks and the ASG trigger
-- Support the device's native output grouping
+- ~~Support the device's native output grouping~~ — **withdrawn during design review, 2026-08-28.**
+  The premise was wrong: all seven groups are empty on all three matrices, and the Control4 driver
+  never calls `setOutputToGroup`. Club BBQ's 2.1 is a driver-side construct the matrix has no
+  record of. See the design doc's "FR-07 grouping — withdrawn, on evidence"
 - Install and update through HACS, configured entirely in the UI
 
 **Secondary goals**
@@ -139,6 +142,13 @@ A-01 and A-02 are **accepted deliberately**, not overlooked: both need the hardw
 playing, neither blocks the rest of the work, and both are pinned by tests so that changing the
 behaviour later is a deliberate edit rather than an accident. They match what the Control4 driver
 itself does.
+
+**Accepted behaviour change at cutover**
+
+Club BBQ's 2.1 pairing is implemented inside the Control4 driver, not in the matrix. After
+cutover, setting that zone's volume from Home Assistant moves output 1 only; output 2 stays where
+it is. Under Control4 both move together. Accepted rather than mirrored, because AV-03 plans to
+undo the pairing and rewire the zone as true stereo. *(Owner decision, 2026-08-28.)*
 
 **Assumptions already retired by measurement**
 
