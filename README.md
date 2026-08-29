@@ -95,8 +95,21 @@ here — a 250 ms leading-edge debounce on route changes, and optional turn-on v
 third is deliberately not: overwriting hardware state because a socket reconnected is a behaviour
 worth losing.
 
-This has not been verified with a controller actually powered down, only with one running
-alongside. If you are planning the same move, that is the gap to close yourself.
+**Verified 2026-08-29 with the Control4 drivers disconnected from all three matrices**: every one
+of 27 zones was exercised from Home Assistant — volume, turn-on register, routing to two different
+sources, volume change while playing, mute, unmute, off — and all 27 passed every check. Each
+assertion was made against the matrix over a separate TCP socket rather than against Home
+Assistant, so a write that never reached the hardware could not have passed. Zero warnings or
+errors in the integration log for the run.
+
+One caveat worth stating plainly: the controller itself remained powered, with only its Triad
+drivers stopped. That is the audio-relevant state, not a full power-down.
+
+**If you try this, know that a zone comes on at its turn-on register.** Ours read 0.0 dB — full
+output — on 23 of 27 zones, so routing a source without lowering that register first would have
+brought those zones up at maximum. Lower it, read it back off the device to confirm, and only then
+route. The register also has a read-after-write race: a read issued immediately after the write can
+return the old value, so let it settle before believing it.
 
 ## Protocol
 

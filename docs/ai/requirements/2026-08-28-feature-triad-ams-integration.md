@@ -188,6 +188,42 @@ matrix has no record of. See the design doc's "FR-07 grouping — withdrawn, on 
    stopping the Control4 driver and exercising every zone from Home Assistant before the hardware
    is decommissioned, so the check is reversible.
 
+   **Met 2026-08-29.** The Control4 drivers for all three matrices were disconnected and every one
+   of the 27 zones was exercised from Home Assistant: volume down, turn-on register, route to a
+   first source, route to a second, volume change while playing, mute, unmute, off, restore.
+   **27/27 passed on all ten checks, with zero failures and zero skips.** Every assertion was made
+   against the matrix over a **separate TCP socket**, not against Home Assistant, so a coordinator
+   that reported success without writing would have been caught. Integration logs for the run:
+   260 debug lines, **zero warnings, zero errors**, and no swallowed turn-on write. Polls completed
+   in 0.005–0.018 s against a 30 s interval.
+
+   Both accepted exceptions held, and the first is *already* in force rather than pending: moving
+   the 2.1 zone's output 1 from Home Assistant leaves output 2 where it was. FR-12's setting was
+   left at its default of on, so the second exception did not apply — and turn-on tracking fired
+   correctly on all 27 zones.
+
+   **Three findings came out of the run, none of them in the integration's control path.**
+
+   * **A zone comes on at its turn-on register, and that register read 100 — 0.0 dB, full output —
+     on 23 of 27 zones.** Routing a source without lowering it first would have brought those zones
+     up at maximum in occupied rooms. The test gates every zone on a hardware read-back of both
+     volume and turn-on before routing, and refuses to route one that fails. It fired once and
+     prevented exactly that.
+   * **The turn-on register has a read-after-write race.** A read issued immediately after the write
+     can return the *pre-write* value, non-deterministically — measured across three outputs on one
+     matrix, two returned stale at +0.0 s and all three were correct from +0.2 s. This is a property
+     of the device, not of the client. Anything that writes the register and immediately verifies it
+     must settle first or it will report a landed write as failed.
+   * **`_store_turn_on_volume` swallows its write failures at debug level.** Two apparent FR-12
+     misses in the first pass left no trace above debug, and were not reproducible once debug
+     logging was on. Worth revisiting: a turn-on register that silently fails to update is invisible
+     until someone switches the zone on and it comes up at the wrong volume.
+
+   What this does **not** cover: the Control4 controller itself stayed powered, with only its Triad
+   drivers disconnected. That is what this criterion asks for, and it is the audio-relevant state —
+   but a Control4-*initiated* volume change re-pairing the 2.1 outputs cannot be observed from
+   Home Assistant, because the matrix does not announce changes.
+
 **Non-functional criteria** *(added during requirements review)*
 
 | ID | Criterion | Why it matters | How it is checked |
