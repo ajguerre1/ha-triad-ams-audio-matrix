@@ -19,7 +19,10 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry
 from custom_components.triad_ams.const import DOMAIN
 from tests.simulator import AmsSimulator
 
-pytest_plugins = "pytest_homeassistant_custom_component"
+# No ``pytest_plugins`` declaration here. pytest refuses it in a non-root conftest, and it is
+# unnecessary anyway: pytest-homeassistant-custom-component registers itself through entry points
+# when installed, so its fixtures are available wherever it is present -- which is exactly the
+# condition tests/conftest.py already tests to decide whether to collect this directory.
 
 
 @pytest.fixture(autouse=True)
