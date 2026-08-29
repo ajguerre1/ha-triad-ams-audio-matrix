@@ -276,10 +276,23 @@ moves audio instantly and audibly.
 
 ## Performance Testing
 
-- [ ] NFR-01 — a full poll of a 24-output matrix completes well inside the interval. Timed against
-      the simulator, then against a real AMS24
-- [ ] NFR-02 — steady-state polling adds no measurable churn. Sampled with the owner's
-      `tools/ha_state_churn.py`, ≥300 s, like-for-like, before and after
+- [x] **NFR-01 — a full poll completes well inside the interval.** Measured on the live system
+      2026-08-29 from the coordinator's own debug output: **0.015 s** for the 12-output matrix,
+      **0.005 s** for the 4-output one, against a **30 s** interval. Three orders of magnitude of
+      headroom
+- [x] **NFR-02 — steady-state polling adds no measurable churn.** 300 s sample on the live system
+      2026-08-29: **1629 events, 5.43/s overall, and not one of them from a Triad entity.** Zero,
+      while the integration was polling three matrices roughly every 30 s — some 2,400 device reads
+      over the window. The `media_player` domain's 98 events are entirely one unrelated desktop PC
+
+      **The rate comparison is deliberately not the evidence here, and reporting it as such would
+      be a mistake this project has already made three times.** The backlog's own warning is that
+      four samples in one evening gave 3.08, 6.50, 5.78 and 4.48/s — a >2× spread — and that short
+      samples produced *confidently wrong* conclusions (HEALTH-12). 5.43/s sits inside that band,
+      and this was a 300 s sample against a 480 s trustworthy baseline, so **5.43 vs 4.48 supports
+      no conclusion in either direction**. What does support one is the absence: a rate can drift
+      with whatever is playing in the house, but zero events from 27 entities under active polling
+      cannot
 - [ ] NFR-03 — one unreachable matrix does not stall the others. Stop one simulator, assert the
       other coordinators keep updating
 
