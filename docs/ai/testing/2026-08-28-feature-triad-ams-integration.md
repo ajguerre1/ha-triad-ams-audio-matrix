@@ -127,12 +127,12 @@ applying any file-level ignore.
 
 | Run | Where | Result |
 |---|---|---|
-| Offline suite | Windows dev box | **87 passed**, exit 0 |
-| Full suite | CI (Ubuntu) | **106 passed**, exit 0 |
+| Offline suite | Windows dev box | **92 passed**, exit 0 |
+| Full suite | CI (Ubuntu) | **119 passed**, exit 0 |
 | `ruff check` / `ruff format --check` | Both | Clean, exit 0 |
 | hassfest, HACS validation, strings parity | CI | Pass |
 
-The 19-test gap between the two runs is exactly `tests/ha/`, and it is the part that cannot be
+The 27-test gap between the two runs is exactly `tests/ha/`, and it is the part that cannot be
 verified locally at any point. CI is the gate for it.
 
 ## Manual Testing
@@ -146,8 +146,11 @@ moves audio instantly and audibly.
 - [ ] Rollback rehearsed (criterion 5)
 - [ ] **Club BBQ output 2 does not follow output 1 from HA** — expected, not a defect. The pairing
       is Control4-side and the matrix has no record of it
-- [ ] Capture with a zone playing: does an idle socket push audio-sense? What does value `2` mean?
-      (settles A-01 and A-02)
+- [x] **Capture with a zone playing, 2026-08-29** — settled A-02 (`2` = not measuring) and mostly
+      A-01 (a passive socket saw nothing in 40 s). Surfaced C-09: enabling audio sense returns a
+      burst of ~one frame per input
+- [ ] Once audio sense is enabled in the Control4 driver: confirm the input sensors report real
+      values, and whether a signal *transition* pushes an unsolicited frame
 
 ## Performance Testing
 

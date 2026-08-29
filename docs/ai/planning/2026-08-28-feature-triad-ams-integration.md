@@ -59,12 +59,12 @@ exit 0.**
 
 | # | Task | Traces to | Depends on | Done when |
 |---|---|---|---|---|
-| 13 | Tiered polling in the coordinator | D-10, NFR-01 | 8 | DSP attributes polled only when a consumer is enabled |
+| 13 | Tiered polling in the coordinator | D-10, NFR-01 | 8 | **done for inputs 2026-08-29**, reference-counted; outputs' DSP tier still to do |
 | 14 | `number` — bass, treble, balance, max/turn-on volume, 5-band EQ | FR-02 | 13 | Disabled by default; values round-trip against the simulator |
 | 15 | `number` — input gain | FR-03 | 13 | As above |
 | 16 | `switch` — loudness, mono-sum | FR-04 | 13 | As above |
 | 17 | `switch` — trigger banks and ASG | FR-05 | 8 | ASG index from `MatrixSpec`; 8×8 and 24×24 both covered |
-| 18 | `binary_sensor` — audio sense | FR-06, A-01, A-02 | 13 | Polled per A-01; only value `1` detected per A-02 |
+| 18 | `binary_sensor` — audio sense | FR-06 | — | **done 2026-08-29.** Three-state: `2` renders `unavailable`, not `off`. Per-matrix diagnostic explains why. No enable switch — see design |
 | 19 | `sensor` — firmware, connection state | FR-08 | 7 | Diagnostic category, disabled by default |
 | 20 | Services: `set_route`, `set_eq_band`, `sync_all`, `send_raw` | FR-11 | 14, 16 | `services.yaml` + translations; hassfest passes |
 | 21 | `diagnostics.py`, `repairs.py` | Design "Security" | 7 | **Host and MAC redacted** — diagnostics get pasted into public issues |
@@ -116,10 +116,14 @@ Milestone 3 closed tasks 8–11: the code now matches the design, and 87 tests p
 The refactor was contained — no behaviour changed, and the existing suite caught every call site
 as it moved.
 
-**Next three actions:** task 12 (phase 7 audit — the remaining reconciliation step, which reads
-every file against the design rather than only the four predicted deviations), then task 13
-(tiered polling) and task 23 (`tests/ha/`). Task 13 gates every DSP platform, so it comes before
-tasks 14–18.
+**Next three actions:** task 14/15 (`number` — tone, EQ, input gain), task 16/17 (`switch` —
+loudness, mono, triggers), task 19 (`sensor` — firmware, connection state). The input half of
+task 13 is done and its reference-counting pattern carries straight over to the output DSP tier.
+
+**Blocked on the owner:** audio sense must be enabled in the *Control4 driver*
+(`EX_CMD.SET_DISABLE_AUDIO_SENSE` → `DISABLED = false`) on all three matrices, or the FR-06
+entities stay permanently unavailable. Setting it device-side does not stick — `SyncStateToDevice`
+re-asserts the driver's own value on every reconnect.
 
 **Riskiest area** is not the code: it is the cutover, because the two integrations cannot coexist
 and validation therefore happens after the swap. Task 23's `unique_id` test is the cheapest
