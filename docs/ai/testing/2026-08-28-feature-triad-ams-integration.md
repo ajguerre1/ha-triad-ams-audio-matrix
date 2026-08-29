@@ -146,6 +146,23 @@ result was **exactly two failures, the right two**, with messages naming the rea
 
 Nothing else failed, so neither test is passing for an unrelated reason.
 
+**A third guard, added 2026-08-29 with the AV-21 fix, was verified the same way** — and it had to
+be, because the first attempt at that fix passed its tests while still failing on hardware.
+
+| Guard removed | Tests that caught it |
+|---|---|
+| The 30 ms spacing between route read-back retries | `test_a_source_change_is_not_published_stale`, `test_turning_off_is_not_published_stale` |
+
+**This is the one where the test double was the defect.** The simulator first modelled the device's
+read-after-write race as *one stale answer per write*, chosen so that `asyncio.sleep()` could not
+count as a fix. That model is satisfied by any retry at all, so it passed a retry loop whose three
+attempts completed in about a millisecond — inside a window lasting up to 25 ms, where every read
+returns the same stale answer. Green build, same bug on the device.
+
+The lesson generalises past this integration: **a double's simplification decides which fixes it is
+capable of rejecting.** Model the mechanism, not the symptom. The race is now a time window, so a
+fix has to be spaced as well as repeated, and removing the spacing fails both tests.
+
 ### Two findings from writing these
 
 **The simulator's volume taper was wrong, and it had been wrong all along.** It interpolated
