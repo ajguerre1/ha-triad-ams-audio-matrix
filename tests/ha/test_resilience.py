@@ -175,12 +175,9 @@ class TestEachReadFailsOnItsOwn:
     @pytest.mark.parametrize(
         ("prefix", "what"),
         [
-            ("ff550204f5", "input gain"),
-            ("ff55030550f5", "a trigger bank"),
+            ("ff55040204f5", "input gain"),
+            ("ff55040550f5", "a trigger bank"),
             ("ff55040aa2f5", "the audio-sense enable flag"),
-            ("ff55040aa3f5", "the audio-sense off delay"),
-            ("ff5503066500", "the firmware version"),
-            ("ff55030881f5", "the addressing mode"),
             ("ff55040aa0f5", "an audio-sense input"),
         ],
     )
@@ -231,3 +228,66 @@ class TestTurnOnVolumeStorageFailing:
         await coordinator._store_turn_on_volume(1)
         await hass.async_block_till_done()
         assert simulator.state.channels[1].turn_on_step >= 0
+
+
+class TestTheReadsThatOnlyHappenOnce:
+    """Firmware, addressing mode and the off delay are read once and cached.
+
+    A fault injected after setup never meets them, so these break on the very first poll -- which
+    is also the only chance real hardware gets to fail them.
+    """
+
+    @pytest.mark.parametrize(
+        ("prefix", "what"),
+        [
+            ("ff5503066500", "the firmware version"),
+            ("ff55030881f5", "the addressing mode"),
+            ("ff55040aa3f5", "the audio-sense off delay"),
+        ],
+    )
+    async def test_a_cached_read_failing_does_not_stop_setup(
+        self, hass: HomeAssistant, prefix: str, what: str
+    ) -> None:
+        sim = AmsSimulator(outputs=8, inputs=8)
+        await sim.start()
+        sim.state.audio_sense_enabled = True
+        sim.fail_matching = prefix  # Armed before the entry is ever set up.
+
+        entry = make_entry(sim)
+        entry.add_to_hass(hass)
+        assert await hass.config_entries.async_setup(entry.entry_id), (
+            f"setup failed because {what} answered badly once"
+        )
+        await hass.async_block_till_done()
+        assert hass.states.get(ZONE_1) is not None
+        await sim.stop()
+
+
+class TestRefreshingWhileUnreachable:
+    """The targeted refreshes only reach their transport-failure branch when something consumes
+    the tier -- otherwise they return early and never touch the socket."""
+
+    async def test_every_tier_swallows_a_dead_socket(self, hass: HomeAssistant) -> None:
+        sim = AmsSimulator(outputs=8, inputs=8)
+        await sim.start()
+        sim.state.audio_sense_enabled = True
+        entry = await _setup(hass, sim, enable=[SENSE_1, INPUT_GAIN, BANK_1, BASS_1])
+        coordinator = entry.runtime_data
+        assert coordinator.polls_inputs and coordinator.polls_triggers
+
+        await sim.stop()
+        await coordinator.async_refresh_inputs()
+        await coordinator.async_refresh_triggers()
+        await coordinator.async_refresh_sense_settings()
+        await coordinator.async_refresh_output_dsp(1)
+        await coordinator.async_refresh_output(1)
+        await hass.async_block_till_done()
+
+    async def test_applying_a_route_with_nothing_pending_is_a_no_op(
+        self, hass: HomeAssistant, simulator: AmsSimulator
+    ) -> None:
+        """The debouncer can fire after the pending routing has already been applied."""
+        entry = await _setup(hass, simulator)
+        before = len(simulator.received)
+        await entry.runtime_data._apply_pending_route(1)
+        assert len(simulator.received) == before, "it sent a command with nothing pending"
