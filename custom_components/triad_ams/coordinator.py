@@ -20,6 +20,7 @@ import asyncio
 import logging
 from dataclasses import dataclass, field, replace
 from datetime import timedelta
+from typing import Final
 
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.debounce import Debouncer
@@ -42,6 +43,29 @@ ROUTE_DEBOUNCE_SECONDS = 0.25
 #: How long a volume must settle before it is stored as the zone's turn-on volume. Matches the
 #: Control4 driver's own 10 s, which exists so dragging a slider does not write fifty times.
 TURN_ON_VOLUME_DEBOUNCE_SECONDS = 10.0
+
+#: How many extra reads to spend confirming a routing write landed.
+#:
+#: **The device answers a read issued straight after a write with the pre-write value.** Measured
+#: 2026-08-29 on a live AMS24: 6 of 8 route reads and 14 of 18 volume reads returned the previous
+#: value, always exactly the previous value and never a third one, clearing within ~20 ms.
+#:
+#: Routing is the path that was exposed, because ``_read_output`` reads the route *first* and so
+#: issues it with no intervening round trip. Volume escapes only because that same ordering
+#: spends a round trip on the route before reading it -- an accident, not a guarantee.
+#:
+#: Retrying rather than sleeping is deliberate. A sleep is a guess about the device's internals
+#: that the next firmware is free to invalidate, and it would pay its cost on every write instead
+#: of only the ones that need it. Two extra reads is ample: the race clears in well under one
+#: round trip, and the simulator owes exactly one stale answer per write.
+ROUTE_READ_BACK_RETRIES: Final = 2
+
+
+class _Unset:
+    """Sentinel type for ``confirm_source``, since ``None`` means 'disconnected' there."""
+
+
+_UNSET: Final = _Unset()
 
 
 @dataclass(frozen=True, slots=True)
@@ -530,7 +554,16 @@ class TriadCoordinator(DataUpdateCoordinator[MatrixSnapshot]):
         try:
             await self.client.set_turn_on_volume_step(output, snapshot.volume_step)
         except (CommandError, ParseError, TransportError) as err:
-            _LOGGER.debug("could not store the turn-on volume for output %s: %s", output, err)
+            # Warning, not debug, and not a raise. Raising would report a volume change as broken
+            # when the volume did change -- this is a follow-up. But the consequence outlives the
+            # request: the zone keeps its old turn-on register and will come on at a volume nobody
+            # chose, with no entity showing that register by default. Silence made it unfindable.
+            _LOGGER.warning(
+                "could not store the turn-on volume for output %s: %s. That output will still "
+                "come on at its previous turn-on volume",
+                output,
+                err,
+            )
             return
         if output in self._dsp_consumers:
             # Something is displaying this value, so it has to be re-read to be believed.
@@ -592,16 +625,31 @@ class TriadCoordinator(DataUpdateCoordinator[MatrixSnapshot]):
             await self.client.disconnect_output(output)
         else:
             await self.client.set_route(output, source)
-        await self.async_refresh_output(output)
+        await self.async_refresh_output(output, confirm_source=source)
 
-    async def async_refresh_output(self, output: int) -> None:
+    async def async_refresh_output(
+        self, output: int, *, confirm_source: int | _Unset | None = _UNSET
+    ) -> None:
         """Re-read one output and publish it, without disturbing the others.
 
         Called after a write so the UI reflects what the device actually did rather than what was
         asked for -- the two differ whenever a max-volume cap or another controller intervenes.
+
+        ``confirm_source`` guards the **read-after-write race**. Pass it the source that was just
+        written and the read is repeated while the device keeps answering with something else.
+        Omit it for reads that do not follow a routing write; ``None`` is a real value meaning
+        "disconnected", which is why the default is a sentinel rather than ``None``.
         """
         try:
             snapshot = await self._read_output(output)
+            if confirm_source is not _UNSET:
+                for _ in range(ROUTE_READ_BACK_RETRIES):
+                    if snapshot.source == confirm_source:
+                        break
+                    # Not an error, and not worth raising over: the device is entitled to refuse
+                    # a route, and after the retries whatever it reports is published as the
+                    # truth. This only stops a *pre-write* answer being mistaken for that truth.
+                    snapshot = await self._read_output(output)
         except (CommandError, ParseError, TransportError) as err:
             # Not fatal: the scheduled poll will pick this up. Failing here would surface a
             # transient read error as a failed user action that had in fact succeeded.

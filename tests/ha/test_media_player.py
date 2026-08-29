@@ -193,3 +193,48 @@ class TestRoutingIsCoalesced:
         # No clock advance: the state must already be right.
         assert hass.states.get(ENTITY).attributes[ATTR_INPUT_SOURCE] == "Input 4"
         assert simulator.state.channels[1].source == 4
+
+    async def test_a_source_change_is_not_published_stale(
+        self, hass: HomeAssistant, simulator: AmsSimulator
+    ) -> None:
+        """The re-read after a route write must not believe a pre-write answer.
+
+        Measured on live hardware 2026-08-29: **6 of 8** route reads issued straight after a
+        route write returned the *previous* route. ``_apply_pending_route`` writes and then
+        re-reads with no intervening round trip, so it lands inside that window and publishes the
+        old source -- which then stands until the next poll, up to 30 s later.
+
+        Nothing raises, because a stale route is a perfectly plausible route. The only thing that
+        distinguishes it is that it is not what was just written, so that is what this asserts.
+        """
+        simulator.stale_reads_after_write = True
+        await _setup(hass, simulator)
+
+        await _call(hass, SERVICE_SELECT_SOURCE, **{ATTR_INPUT_SOURCE: "Input 4"})
+        await hass.async_block_till_done()
+
+        assert simulator.state.channels[1].source == 4, "the write itself should have landed"
+        assert hass.states.get(ENTITY).attributes[ATTR_INPUT_SOURCE] == "Input 4"
+
+    async def test_turning_off_is_not_published_stale(
+        self, hass: HomeAssistant, simulator: AmsSimulator
+    ) -> None:
+        """The same race on the disconnect path, which reports ``Audio Off`` rather than a source.
+
+        Worth its own test: turning a zone off and having it still read as playing is the
+        direction a user is most likely to act on twice.
+        """
+        await _setup(hass, simulator)
+        await _call(hass, SERVICE_SELECT_SOURCE, **{ATTR_INPUT_SOURCE: "Input 4"})
+        await hass.async_block_till_done()
+        # Let the route debouncer's cooldown lapse. Without this the turn-off arrives inside it
+        # and is coalesced into a trailing run that has not fired yet, so the assertions below
+        # would fail because nothing was written -- not because something stale was read.
+        await _settle(hass)
+
+        simulator.stale_reads_after_write = True
+        await _call(hass, SERVICE_TURN_OFF)
+        await hass.async_block_till_done()
+
+        assert simulator.state.channels[1].source is None, "the write itself should have landed"
+        assert hass.states.get(ENTITY).state == STATE_OFF

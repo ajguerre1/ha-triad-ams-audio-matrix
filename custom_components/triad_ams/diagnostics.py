@@ -17,6 +17,7 @@ from homeassistant.components.diagnostics import async_redact_data
 from homeassistant.core import HomeAssistant
 
 from . import TriadConfigEntry
+from .ams.errors import CommandError, ParseError, TransportError
 from .const import CONF_HOST
 
 #: Config-entry keys never to include. ``unique_id`` is redacted too because it is built from the
@@ -60,8 +61,35 @@ async def async_get_config_entry_diagnostics(
             "dsp_outputs": coordinator.dsp_outputs,
             "last_update_success": coordinator.last_update_success,
         },
-        "state": _state(data) if data else None,
+        "state": (_state(data) | {"turn_on_volume": await _turn_on_registers(coordinator)})
+        if data
+        else None,
     }
+
+
+async def _turn_on_registers(coordinator: Any) -> dict[str, int | None]:
+    """Read every active output's turn-on register, live.
+
+    **A zone comes on at this register, not at the volume it was left at**, and measured across a
+    live installation on 2026-08-29 it read step 100 -- 0.0 dB, full output -- on 23 of 27 zones.
+
+    It is read here rather than taken from the snapshot because the snapshot usually does not have
+    it: ``state.dsp`` is populated only for outputs with a DSP consumer, and DSP entities ship
+    disabled. So the register that decides how loud a zone comes on was absent from the one
+    artefact someone sends when asking why a zone came on loud.
+
+    Diagnostics is on demand, so these round trips cost nothing in steady state -- which is the
+    reason this can be a live read while the poll tiers stay as narrow as they are. A read that
+    fails reports ``None`` rather than failing the whole download; a partial answer is worth more
+    than none to whoever is reading it.
+    """
+    registers: dict[str, int | None] = {}
+    for output in coordinator.active_outputs:
+        try:
+            registers[str(output)] = await coordinator.client.get_turn_on_volume_step(output)
+        except (CommandError, ParseError, TransportError):
+            registers[str(output)] = None
+    return registers
 
 
 def _state(data: Any) -> dict[str, Any]:

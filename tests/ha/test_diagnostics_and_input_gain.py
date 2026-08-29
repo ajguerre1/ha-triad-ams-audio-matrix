@@ -127,3 +127,59 @@ class TestDiagnosticsRedaction:
         diag = await async_get_config_entry_diagnostics(hass, entry)
         assert diag["polling"]["polls_inputs"] is True
         assert diag["polling"]["dsp_outputs"] == []
+
+
+class TestTurnOnRegisterIsObservable:
+    """AV-21: a zone comes on at its turn-on register, and nothing surfaced that register.
+
+    Measured 2026-08-29 across a live installation: the register read **step 100 -- 0.0 dB, full
+    output -- on 23 of 27 zones**. Routing a source to one of those brings it up at maximum,
+    whatever volume was set beforehand.
+
+    It was invisible. There is no enabled entity for it by default, and `state.dsp` is populated
+    only for outputs with a DSP consumer, so with DSP entities disabled -- the default -- the one
+    artefact someone would send when asking why a zone came on loud omitted the answer.
+    """
+
+    async def test_diagnostics_report_it_without_the_dsp_platform(
+        self, hass: HomeAssistant, simulator: AmsSimulator
+    ) -> None:
+        entry = await _setup(hass, simulator)
+        diagnostics = await async_get_config_entry_diagnostics(hass, entry)
+
+        # The precondition: no DSP consumer, so the existing dsp section cannot carry it.
+        assert diagnostics["polling"]["dsp_outputs"] == []
+        assert diagnostics["state"]["dsp"] == {}
+
+        registers = diagnostics["state"]["turn_on_volume"]
+        assert set(registers) == {str(o) for o in diagnostics["polling"]["active_outputs"]}
+        assert all(v is not None for v in registers.values())
+
+    async def test_it_reports_what_the_device_holds(
+        self, hass: HomeAssistant, simulator: AmsSimulator
+    ) -> None:
+        """A value read from the device, not echoed back from the volume the coordinator knows."""
+        entry = await _setup(hass, simulator)
+        simulator.state.channels[1].turn_on_step = 97
+
+        diagnostics = await async_get_config_entry_diagnostics(hass, entry)
+
+        assert diagnostics["state"]["turn_on_volume"]["1"] == 97
+
+    async def test_a_register_that_will_not_read_reports_none(
+        self, hass: HomeAssistant, simulator: AmsSimulator
+    ) -> None:
+        """One unreadable register must not cost the whole download.
+
+        Someone requesting diagnostics is already troubleshooting. A partial answer is worth more
+        to them than an exception, so a refused read reports ``None`` for that output and the rest
+        are still reported.
+        """
+        entry = await _setup(hass, simulator)
+        simulator.fail_matching = "ff55040333f500"  # the turn-on query for output 1
+
+        diagnostics = await async_get_config_entry_diagnostics(hass, entry)
+
+        registers = diagnostics["state"]["turn_on_volume"]
+        assert registers["1"] is None
+        assert [k for k, v in registers.items() if v is not None], "the others must still report"
