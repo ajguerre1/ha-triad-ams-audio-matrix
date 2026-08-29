@@ -115,7 +115,7 @@ interface, outside Home Assistant entirely, and are therefore invisible to autom
 | ID | Constraint | Basis |
 |---|---|---|
 | C-01 | Must coexist with Control4 on the same matrix, concurrently | **Measured**: three simultaneous TCP clients answered correctly with Control4 connected |
-| C-02 | Must be a drop-in replacement: same `triad_ams` domain, existing entity IDs preserved | Owner decision; 26 zones referenced by live dashboards and automations |
+| C-02 | Must be a drop-in replacement: same `triad_ams` domain, existing entity IDs preserved | Owner decision. **Stakes corrected 2026-08-29 by measurement** — see below |
 | C-03 | No site data in the repository | The repository is public and auto-pushes on commit |
 | C-04 | Frame framing must be learned per connection, not assumed | **Measured**: some firmware pads error frames to 150 bytes with NULs |
 | C-05 | `Command error` and empty frames must not close the connection | **Measured**: both arrive on healthy sockets |
@@ -142,6 +142,32 @@ A-01 and A-02 are **accepted deliberately**, not overlooked: both need the hardw
 playing, neither blocks the rest of the work, and both are pinned by tests so that changing the
 behaviour later is a deliberate edit rather than an accident. They match what the Control4 driver
 itself does.
+
+**C-02's stakes were overstated, and the correction is worth recording**
+
+This document originally justified the drop-in requirement as protecting entities "referenced by
+live dashboards and automations". A pre-cutover audit of the installation found otherwise:
+
+| Measured 2026-08-29 | |
+|---|---|
+| Entities across three config entries | **27** (12 + 11 + 4 — a subset of 56 outputs, not all) |
+| With an area assigned | **0** |
+| With aliases | **0** |
+| Renamed by the user | **0** |
+| References in YAML config | **0** |
+| References anywhere in `.storage` outside the entity registry itself | **0** |
+| `unique_id` already matching `{entry_id}_output_{n}` | **27 / 27** |
+
+**Nothing consumes these entities.** No dashboard card, no automation, no script. If the cutover
+renamed every one of them, nothing downstream would break.
+
+The requirement stands, because reproducing the scheme costs nothing and 27/27 already match. But
+it is *insurance*, not a load-bearing constraint, and the difference matters: it means the cutover
+is low-risk rather than delicate, and it means the `unique_id` test earns its place by protecting
+against a future in which dashboards *do* reference these entities, not against a present crisis.
+
+Recording it rather than quietly softening the language, because the original claim shaped how
+several decisions were argued.
 
 **Accepted behaviour change at cutover**
 
