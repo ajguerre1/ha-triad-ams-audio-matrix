@@ -215,10 +215,11 @@ class TestTheRepairFixesItself:
         # detail -- the first version of this test guessed at that key and got it wrong.
         manager = repairs_flow_manager(hass)
         assert manager is not None, "the repairs component did not register a flow manager"
-        flow = await manager.async_create_flow(
-            issue_id, data={"entry_id": entry.entry_id}, context={"source": "user"}
-        )
-        result = await manager.async_configure(flow["flow_id"], {})
+        # The handler key is the *domain*; `data` carries the issue id. Home Assistant looks the
+        # issue up and hands its stored data to async_create_fix_flow, which is where entry_id
+        # comes from -- the flow never receives it from the caller.
+        started = await manager.async_init(DOMAIN, data={"issue_id": issue_id})
+        result = await manager.async_configure(started["flow_id"], {})
         await hass.async_block_till_done()
 
         assert result["type"] == "create_entry"
