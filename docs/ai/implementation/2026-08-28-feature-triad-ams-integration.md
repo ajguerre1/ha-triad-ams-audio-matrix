@@ -175,3 +175,25 @@ resistance.
 `pytest tests/` — 87 passed, exit 0 · `ruff check .` — clean, exit 0 ·
 `ruff format --check .` — 59 files formatted, exit 0 · corrected `async with asyncio.timeout`
 executed directly and confirmed to run.
+
+## Phase 9 review — 2026-08-29
+
+Holistic pass over the ~950 lines FR-12…FR-17 added. **No blocking findings.** Four acted on,
+three of which were invisible to the test suite because they were about lifetime and cost rather
+than behaviour.
+
+| # | Finding | Severity | Resolution |
+|---|---|---|---|
+| 1 | Debouncers were `async_cancel()`-ed, not `async_shutdown()`-ed | Medium | Cancelling stops the timer but leaves the `Debouncer` holding its function — a closure over the coordinator, and through it the client and socket. Home Assistant added `async_shutdown` to release exactly that (core#137237). This integration reloads on **every options change**, so cancelling alone left one coordinator reachable per edit |
+| 2 | A volume-cap change was silently dropped when the entry was not loaded | Medium | A matrix unreachable at startup leaves its entry unloaded while the options flow still opens. Now logged. It matters more here than elsewhere: the max-volume register has **no getter**, so nothing downstream could ever notice the device enforcing a different ceiling than the UI shows |
+| 3 | The audio-sense off delay was re-read on every poll | Low | It was cached with the firmware until FR-14 made it settable, then went to the other extreme. It is configuration, and a write refreshes it explicitly. The **enable flag beside it is still polled**, because entity availability and the repair issue both depend on it being current |
+| 4 | `send_bursty` returned a byte count nobody read | Low | Now asserted. Unasserted, a drain that read one frame and returned would pass every other test — the surplus would sit in the buffer and desynchronise a *later* exchange, which is precisely how C-09 hid on real hardware |
+
+**Recorded, not fixed.** Removing the two read-only entities (`binary_sensor.…audio_sense_enabled`,
+`sensor.…audio_sense_off_delay`) orphans them in the registry for anyone who had enabled them.
+Harmless here — the integration this one replaces never created them — but it belongs in a release
+note. And `config_flow` remains the thinnest area at 61%; it covers the add-a-matrix flow, which is
+not on this installation's cutover path because the entries already exist and are adopted.
+
+**Final state:** 237 tests, 88% coverage, five CI jobs green, working tree clean against
+`origin/main`.
