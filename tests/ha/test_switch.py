@@ -131,3 +131,60 @@ class TestTriggers:
             assert entry.runtime_data.polls_triggers is True
         finally:
             await sim.stop()
+
+
+AUDIO_SENSE = "switch.test_matrix_audio_sense"
+
+
+class TestAudioSenseSwitch:
+    """FR-14. Withheld until Control4 stopped re-asserting its own value on every reconnect."""
+
+    async def test_it_turns_measuring_on_and_off(
+        self, hass: HomeAssistant, simulator: AmsSimulator
+    ) -> None:
+        simulator.state.audio_sense_enabled = False
+        await _setup(hass, simulator, enable=[AUDIO_SENSE])
+        assert hass.states.get(AUDIO_SENSE).state == STATE_OFF
+
+        await _toggle(hass, AUDIO_SENSE, on=True)
+        assert simulator.state.audio_sense_enabled is True
+        assert hass.states.get(AUDIO_SENSE).state == STATE_ON
+
+        await _toggle(hass, AUDIO_SENSE, on=False)
+        assert simulator.state.audio_sense_enabled is False
+        assert hass.states.get(AUDIO_SENSE).state == STATE_OFF
+
+    async def test_the_reply_burst_does_not_desynchronise_the_stream(
+        self, hass: HomeAssistant, simulator: AmsSimulator
+    ) -> None:
+        """C-09, end to end through the entity rather than only at the client.
+
+        Enabling is answered by roughly one frame per input. If the switch used the ordinary write
+        path, the surplus frames would be collected by later queries and every zone would report
+        its neighbour's state -- cleanly parsed and entirely wrong.
+        """
+        simulator.state.audio_sense_enabled = False
+        for output in range(1, 9):
+            simulator.mutate(output, source=output)
+        entry = await _setup(hass, simulator, enable=[AUDIO_SENSE])
+
+        await _toggle(hass, AUDIO_SENSE, on=True)
+        await entry.runtime_data.async_refresh()
+        await hass.async_block_till_done()
+
+        outputs = entry.runtime_data.data.outputs
+        for output in range(1, 9):
+            assert outputs[output].source == output, f"desynchronised at output {output}"
+
+    async def test_it_does_not_drag_the_per_input_polling_tier_with_it(
+        self, hass: HomeAssistant, simulator: AmsSimulator
+    ) -> None:
+        """One matrix-wide flag must not cost one read per input.
+
+        Riding the input tier would make enabling this switch alone pull 8 audio-sense reads on
+        this matrix, and 24 on an AMS24, to learn a single boolean.
+        """
+        entry = await _setup(hass, simulator, enable=[AUDIO_SENSE])
+        coordinator = entry.runtime_data
+        assert coordinator.polls_audio_sense_settings is True
+        assert coordinator.polls_inputs is False

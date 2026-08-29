@@ -14,6 +14,7 @@ from homeassistant.components.media_player import (
 )
 from homeassistant.const import ATTR_ENTITY_ID, SERVICE_TURN_OFF, STATE_OFF, STATE_ON
 from homeassistant.core import HomeAssistant
+from pytest_homeassistant_custom_component.common import async_fire_time_changed
 
 from tests.ha.conftest import make_entry
 from tests.simulator import AmsSimulator
@@ -117,3 +118,69 @@ class TestExternalChanges:
         await hass.config_entries.async_reload(entry.entry_id)
         await hass.async_block_till_done()
         assert hass.states.get(ENTITY).state == STATE_ON
+
+
+def _route_commands(sim: AmsSimulator, output: int = 1) -> list[str]:
+    """Route writes for one output. ``ff5504031d`` is set-route; a query carries f5 after it."""
+    prefix = f"ff5504031d{output - 1:02x}"
+    return [f for f in sim.received if f.startswith(prefix)]
+
+
+class TestRoutingIsCoalesced:
+    """FR-13. Nothing else proves the debounce does the one thing it exists for."""
+
+    async def test_rapid_selections_reach_the_device_once(
+        self, hass: HomeAssistant, simulator: AmsSimulator, freezer
+    ) -> None:
+        """Four selections inside the window must not become four writes.
+
+        The leading edge sends the first immediately; the rest are coalesced into a single
+        trailing run carrying the *last* value. Without the debounce this is four commands, which
+        is exactly the behaviour Control4 added its own 250 ms to avoid.
+        """
+        await _setup(hass, simulator)
+        before = len(_route_commands(simulator))
+
+        for source in ("Input 2", "Input 3", "Input 4", "Input 5"):
+            await _call(hass, SERVICE_SELECT_SOURCE, **{ATTR_INPUT_SOURCE: source})
+        await hass.async_block_till_done()
+
+        # Let the cooldown expire so the coalesced trailing run fires.
+        freezer.tick(1.0)
+        async_fire_time_changed(hass)
+        await hass.async_block_till_done()
+
+        writes = len(_route_commands(simulator)) - before
+        assert writes < 4, f"all four selections reached the device ({writes} writes)"
+        assert writes >= 1, "nothing reached the device at all"
+
+    async def test_the_last_selection_is_the_one_that_sticks(
+        self, hass: HomeAssistant, simulator: AmsSimulator, freezer
+    ) -> None:
+        """Coalescing must keep the newest value, not the one that happened to arrive first."""
+        await _setup(hass, simulator)
+
+        for source in ("Input 2", "Input 3", "Input 6"):
+            await _call(hass, SERVICE_SELECT_SOURCE, **{ATTR_INPUT_SOURCE: source})
+        await hass.async_block_till_done()
+        freezer.tick(1.0)
+        async_fire_time_changed(hass)
+        await hass.async_block_till_done()
+
+        assert simulator.state.channels[1].source == 6
+
+    async def test_a_single_selection_is_not_delayed(
+        self, hass: HomeAssistant, simulator: AmsSimulator
+    ) -> None:
+        """The leading edge, and the reason it is leading.
+
+        Home Assistant's select_source is a discrete choice, so a trailing debounce would make a
+        synchronous call asynchronous -- a caller reading state straight afterwards would get the
+        old source. This is the test that would have caught the original `immediate=False`.
+        """
+        await _setup(hass, simulator)
+        await _call(hass, SERVICE_SELECT_SOURCE, **{ATTR_INPUT_SOURCE: "Input 4"})
+        await hass.async_block_till_done()
+        # No clock advance: the state must already be right.
+        assert hass.states.get(ENTITY).attributes[ATTR_INPUT_SOURCE] == "Input 4"
+        assert simulator.state.channels[1].source == 4

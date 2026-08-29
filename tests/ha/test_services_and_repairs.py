@@ -181,3 +181,93 @@ class TestAudioSenseRepair:
             DOMAIN, f"{ISSUE_AUDIO_SENSE_DISABLED}_{entry.entry_id}"
         )
         assert issue is None
+
+
+class TestTheRepairFixesItself:
+    """FR-14 made the issue fixable, not merely better worded.
+
+    Pointing at the new switch reads fine until you remember every non-media_player entity ships
+    disabled: the instruction would really have been "find the entity, enable it, then turn it on".
+    """
+
+    async def test_the_flow_enables_measuring_and_clears_the_issue(
+        self, hass: HomeAssistant, simulator: AmsSimulator
+    ) -> None:
+        from homeassistant.components.repairs.issue_handler import (
+            async_process_repairs_platforms,
+        )
+        from homeassistant.helpers import issue_registry as issue_reg
+
+        simulator.state.audio_sense_enabled = False
+        entry = await _setup(hass, simulator, enable=[SENSE_1])
+
+        issue_id = f"{ISSUE_AUDIO_SENSE_DISABLED}_{entry.entry_id}"
+        registry = issue_reg.async_get(hass)
+        assert registry.async_get_issue(DOMAIN, issue_id) is not None, "the issue was never raised"
+
+        await async_process_repairs_platforms(hass)
+        flow = await hass.data["repairs_flow_manager"].async_create_flow(
+            issue_id, data={"entry_id": entry.entry_id}, context={"source": "user"}
+        )
+        result = await hass.data["repairs_flow_manager"].async_configure(flow["flow_id"], {})
+        await hass.async_block_till_done()
+
+        assert result["type"] == "create_entry"
+        assert simulator.state.audio_sense_enabled is True, "the flow did not enable measuring"
+
+        await entry.runtime_data.async_refresh()
+        await hass.async_block_till_done()
+        assert registry.async_get_issue(DOMAIN, issue_id) is None, "the issue did not clear"
+
+
+class TestApplyEqPreset:
+    """FR-16. Hosted on media_player because every DSP entity ships disabled."""
+
+    async def test_a_preset_writes_all_five_bands(
+        self, hass: HomeAssistant, simulator: AmsSimulator
+    ) -> None:
+        await _setup(hass, simulator)
+        await hass.services.async_call(
+            DOMAIN,
+            "apply_eq_preset",
+            {"entity_id": "media_player.test_matrix_output_1", "preset": "Rock"},
+            blocking=True,
+        )
+        await hass.async_block_till_done()
+
+        channel = simulator.state.channels[1]
+        assert channel.band_gain == [5, 2, -1, 2, 5], "Rock's gains did not reach the device"
+        assert channel.band_freq == [4, 10, 16, 22, 28]
+
+    async def test_it_works_with_every_dsp_entity_disabled(
+        self, hass: HomeAssistant, simulator: AmsSimulator
+    ) -> None:
+        """The reason it lives on media_player rather than on an EQ entity.
+
+        Nothing is enabled here beyond the default set, which is exactly how a fresh installation
+        looks. A service hosted on a disabled entity would be unreachable in that state.
+        """
+        await _setup(hass, simulator)
+        assert hass.states.get(GAIN_1_B1) is None, "an EQ entity was enabled; the test proves less"
+
+        await hass.services.async_call(
+            DOMAIN,
+            "apply_eq_preset",
+            {"entity_id": "media_player.test_matrix_output_1", "preset": "Flat"},
+            blocking=True,
+        )
+        await hass.async_block_till_done()
+        assert simulator.state.channels[1].band_gain == [0, 0, 0, 0, 0]
+
+    async def test_an_unknown_preset_is_refused(
+        self, hass: HomeAssistant, simulator: AmsSimulator
+    ) -> None:
+        """Falling back to Flat would silently apply the opposite of what was asked for."""
+        await _setup(hass, simulator)
+        with pytest.raises(Exception):  # noqa: B017 - voluptuous raises before our code runs
+            await hass.services.async_call(
+                DOMAIN,
+                "apply_eq_preset",
+                {"entity_id": "media_player.test_matrix_output_1", "preset": "Dubstep"},
+                blocking=True,
+            )

@@ -86,6 +86,11 @@ class OutputState:
     loudness: bool = False
     mono: bool = False
     turn_on_step: int = 0
+    #: The device's own ceiling, set by opcode 0x1F. **Write-only on real hardware** -- there is no
+    #: query for it, which is why Home Assistant has to hold the value itself. Modelled because
+    #: the cap is what makes a requested volume differ from the adopted one, and that difference
+    #: is the whole reason turn-on tracking must store the re-read value rather than the sent one.
+    max_step: int = 100
     band_freq: list[int] = field(default_factory=lambda: list(DEFAULT_BAND_INDICES))
     band_gain: list[float] = field(default_factory=lambda: [0.0] * 5)
     band_q: list[int] = field(default_factory=lambda: [2] * 5)  # index 2 == Q 0.7
@@ -347,8 +352,17 @@ class AmsSimulator:
         if opcode == 0x1E:  # volume
             if query:
                 return f"Get Out[{output}] Volume : {_db_for(channel.step)}"
-            channel.step = rest[1]
+            # Capped, and silently: the device reports success for a step above its own ceiling
+            # and simply adopts the ceiling. A client that trusted its own request rather than
+            # re-reading would hold a volume this matrix never accepted.
+            channel.step = min(rest[1], channel.max_step)
             return f"Set Out[{output}] Volume"
+
+        if opcode == 0x1F:  # max volume -- write-only on real hardware, no query exists
+            if query:
+                return "Command error"
+            channel.max_step = rest[1]
+            return f"Set Out[{output}] Max Volume"
 
         if opcode == 0x17:  # mute on, and the mute query
             if query:
