@@ -1,6 +1,6 @@
 # Triad AMS Audio Matrix — Home Assistant integration
 
-Local control of **Triad TS-AMS8, TS-AMS16 and TS-AMS24** audio matrix switches over TCP, with no
+Local control of **Triad TS-AMS8 and TS-AMS24** audio matrix switches over TCP, with no
 cloud, no polling of a vendor API, and no Control4 controller required.
 
 > **Status: 1.0, in use.** Verified against live hardware — an AMS8 on firmware `V1.05.74` and two
@@ -59,6 +59,21 @@ off replaces the read-only `sensor` with a writable `number`).
 - Home Assistant 2026.8.0 or newer
 - A Triad AMS matrix reachable on your LAN, TCP port 52000
 - The matrix's model — there is no command that reports it, so you choose it during setup
+
+### What each model has
+
+| | Inputs | Outputs |
+|---|---|---|
+| **TS-AMS8** | 1–4 analog · **5–8 analog *or* digital**, one connector pair each | 1–8 analog |
+| **TS-AMS24** | 1–16 analog · 17–24 digital | 1–24 analog |
+
+The setup form names each channel accordingly — *Input 5 (Analog/Digital Shared)*, *Input 17
+(Digital)*, *Output 1 (Analog)* — because the index alone does not tell you which socket it is.
+Input 5 is a shared pair on an AMS8 and plain analog on an AMS24.
+
+The AMS8's inputs 5–8 appear twice on its back panel, once under ANALOG AUDIO INPUTS and once
+under DIGITAL AUDIO INPUTS. They are the same four inputs: each takes analog *or* digital, not
+both, so an AMS8 has eight inputs and not twelve.
 
 ## Installation
 

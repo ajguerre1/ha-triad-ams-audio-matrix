@@ -1,6 +1,6 @@
 # Triad AMS control protocol
 
-Reference for the TCP control protocol spoken by the Triad TS-AMS8, TS-AMS16 and TS-AMS24 audio
+Reference for the TCP control protocol spoken by the Triad TS-AMS8 and TS-AMS24 audio
 matrix switches (Hansong "Ariel" platform, also sold under the Control4 label).
 
 Two sources, in order of authority:

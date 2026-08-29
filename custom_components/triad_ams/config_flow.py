@@ -133,6 +133,7 @@ class TriadConfigFlow(ConfigFlow, domain=DOMAIN):
         """
         outputs = self._data[CONF_OUTPUT_COUNT]
         inputs = self._data[CONF_INPUT_COUNT]
+        spec = EntrySettings.resolve(self._data, {}).spec
 
         if user_input is not None:
             return self.async_create_entry(
@@ -140,10 +141,10 @@ class TriadConfigFlow(ConfigFlow, domain=DOMAIN):
                 data=self._data,
                 options={
                     CONF_ACTIVE_OUTPUTS: [
-                        i for i in range(1, outputs + 1) if user_input.get(f"output_{i}")
+                        i for i in range(1, outputs + 1) if user_input.get(spec.output_field(i))
                     ],
                     CONF_ACTIVE_INPUTS: [
-                        i for i in range(1, inputs + 1) if user_input.get(f"input_{i}")
+                        i for i in range(1, inputs + 1) if user_input.get(spec.input_field(i))
                     ],
                     CONF_SCAN_INTERVAL: int(
                         user_input.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL)
@@ -153,9 +154,9 @@ class TriadConfigFlow(ConfigFlow, domain=DOMAIN):
 
         schema: dict[Any, Any] = {}
         for i in range(1, outputs + 1):
-            schema[vol.Optional(f"output_{i}", default=True)] = bool
+            schema[vol.Optional(spec.output_field(i), default=True)] = bool
         for i in range(1, inputs + 1):
-            schema[vol.Optional(f"input_{i}", default=True)] = bool
+            schema[vol.Optional(spec.input_field(i), default=True)] = bool
         schema[vol.Optional(CONF_SCAN_INTERVAL, default=DEFAULT_SCAN_INTERVAL)] = selector(
             {"number": {"min": 5, "max": 300, "step": 5, "unit_of_measurement": "s"}}
         )
@@ -179,6 +180,7 @@ class TriadOptionsFlow(OptionsFlow):
         active_outputs = set(options.get(CONF_ACTIVE_OUTPUTS) or range(1, outputs + 1))
         active_inputs = set(options.get(CONF_ACTIVE_INPUTS) or range(1, inputs + 1))
         caps = options.get(CONF_OUTPUT_MAX_VOLUMES) or {}
+        spec = EntrySettings.resolve(entry.data, options).spec
 
         if user_input is not None:
             new_caps = {
@@ -191,10 +193,10 @@ class TriadOptionsFlow(OptionsFlow):
                 data={
                     **options,
                     CONF_ACTIVE_OUTPUTS: [
-                        i for i in range(1, outputs + 1) if user_input.get(f"output_{i}")
+                        i for i in range(1, outputs + 1) if user_input.get(spec.output_field(i))
                     ],
                     CONF_ACTIVE_INPUTS: [
-                        i for i in range(1, inputs + 1) if user_input.get(f"input_{i}")
+                        i for i in range(1, inputs + 1) if user_input.get(spec.input_field(i))
                     ],
                     CONF_OUTPUT_MAX_VOLUMES: new_caps,
                     CONF_TRACK_TURN_ON_VOLUME: bool(
@@ -208,7 +210,7 @@ class TriadOptionsFlow(OptionsFlow):
 
         schema: dict[Any, Any] = {}
         for i in range(1, outputs + 1):
-            schema[vol.Optional(f"output_{i}", default=i in active_outputs)] = bool
+            schema[vol.Optional(spec.output_field(i), default=i in active_outputs)] = bool
             schema[
                 vol.Optional(
                     f"max_volume_{i}",
@@ -226,7 +228,7 @@ class TriadOptionsFlow(OptionsFlow):
                 }
             )
         for i in range(1, inputs + 1):
-            schema[vol.Optional(f"input_{i}", default=i in active_inputs)] = bool
+            schema[vol.Optional(spec.input_field(i), default=i in active_inputs)] = bool
         schema[
             vol.Optional(
                 CONF_SCAN_INTERVAL,

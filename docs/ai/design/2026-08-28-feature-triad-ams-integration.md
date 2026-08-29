@@ -64,7 +64,7 @@ other two because they have no common resource to block on.
 ```python
 @dataclass(frozen=True, slots=True)
 class MatrixSpec:
-    name: str  # "AMS8" | "AMS16" | "AMS24"
+    name: str  # "AMS8" | "AMS24" -- AMS16 removed 2026-08-29, it was never a product
     outputs: int
     inputs: int
 ```
