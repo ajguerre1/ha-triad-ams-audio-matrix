@@ -94,8 +94,15 @@ class TriadCoordinator(DataUpdateCoordinator[MatrixSnapshot]):
 
         Called from an entity's ``async_added_to_hass``. Reference-counted so the last entity
         being removed also stops the polling it caused.
+
+        The first registration also asks for a refresh, and that is not optional. Entities are
+        added *after* the coordinator's first refresh, so without it the first poll skips inputs
+        -- nobody was listening yet -- and nothing ever asks again. The entities would sit at
+        ``unknown`` until the next scheduled interval, which is exactly what CI caught.
         """
         self._input_consumers += 1
+        if self._input_consumers == 1:
+            self.hass.async_create_task(self.async_request_refresh())
 
         def _release() -> None:
             self._input_consumers = max(0, self._input_consumers - 1)

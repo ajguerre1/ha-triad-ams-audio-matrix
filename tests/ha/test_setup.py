@@ -61,16 +61,38 @@ class TestIdentity:
     async def test_entity_unique_ids_use_the_scheme_the_previous_integration_used(
         self, hass: HomeAssistant, simulator: AmsSimulator
     ) -> None:
-        """Pins C-07. Changing this format orphans every entity in the live installation."""
+        """Pins C-07. Changing this format orphans every entity in the live installation.
+
+        Scoped to ``media_player`` deliberately. Only the output entities inherit a format frozen
+        by the integration this one replaces; platforms added since are free to name themselves,
+        and an assertion over *every* entity would block every new platform for no reason. That
+        is what happened when the audio-sense sensors landed.
+        """
         entry = await _setup(hass, simulator)
         registry = er.async_get(hass)
-        entries = er.async_entries_for_config_entry(registry, entry.entry_id)
-        assert entries, "no entities were registered"
-        for e in entries:
-            assert e.unique_id.startswith(f"{entry.entry_id}_output_")
-        assert {e.unique_id for e in entries} == {
+        outputs = [
+            e
+            for e in er.async_entries_for_config_entry(registry, entry.entry_id)
+            if e.domain == "media_player"
+        ]
+        assert outputs, "no media_player entities were registered"
+        assert {e.unique_id for e in outputs} == {
             f"{entry.entry_id}_output_{n}" for n in range(1, 9)
         }
+
+    async def test_entities_added_since_cannot_collide_with_the_frozen_output_format(
+        self, hass: HomeAssistant, simulator: AmsSimulator
+    ) -> None:
+        """Newer platforms namespace themselves, so they can never shadow an output entity."""
+        entry = await _setup(hass, simulator)
+        registry = er.async_get(hass)
+        others = [
+            e
+            for e in er.async_entries_for_config_entry(registry, entry.entry_id)
+            if e.domain != "media_player"
+        ]
+        assert others, "expected at least the audio-sense sensors"
+        assert not [e for e in others if "_output_" in e.unique_id]
 
     async def test_the_device_is_identified_by_the_config_entry_id(
         self, hass: HomeAssistant, simulator: AmsSimulator
