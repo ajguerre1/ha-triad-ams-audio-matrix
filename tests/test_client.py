@@ -348,3 +348,51 @@ class TestBurstyWrites:
 
         with pytest.raises(TransportError):
             await client.set_audio_sense_enabled(enabled=True)
+
+
+class TestIndexGuardsOnEveryFamily:
+    """The output guard was regression-verified during design reconciliation. Inputs and EQ bands
+    have the same guard and had no test, though the input one is the riskiest of the three: audio
+    sense prints a 0-based index, so an off-by-one there reads as a plausible value rather than an
+    obvious error.
+    """
+
+    async def test_an_answer_about_a_different_input_is_rejected(self) -> None:
+        async with AmsSimulator() as sim:
+            sim.state.audio_sense_enabled = True
+            client = await _client(sim)
+            await client.firmware_version()
+            sim.fail_next = Fault.WRONG_INPUT
+            with pytest.raises(ParseError, match="audio sense"):
+                await client.get_audio_sense(1)
+            await client.disconnect()
+
+    async def test_an_answer_about_a_different_inputs_gain_is_rejected(self) -> None:
+        async with AmsSimulator() as sim:
+            client = await _client(sim)
+            await client.firmware_version()
+            sim.fail_next = Fault.WRONG_INPUT
+            with pytest.raises(ParseError, match="gain"):
+                await client.get_input_gain(1)
+            await client.disconnect()
+
+    async def test_an_answer_about_a_different_band_is_rejected(self) -> None:
+        """A band is addressed by opcode, so a slip here edits the wrong part of the spectrum."""
+        async with AmsSimulator() as sim:
+            client = await _client(sim)
+            await client.firmware_version()
+            sim.fail_next = Fault.WRONG_BAND
+            with pytest.raises(ParseError, match="band"):
+                await client.get_eq_band(1, 1)
+            await client.disconnect()
+
+
+class TestTheDiagnosticReads:
+    async def test_the_mac_address_and_power_state(self) -> None:
+        """Neither is exposed as an entity -- the MAC is redacted from diagnostics and power is
+        deliberately never sent -- but both are read paths the document records."""
+        async with AmsSimulator() as sim:
+            client = await _client(sim)
+            assert await client.mac_address() == "AA:BB:CC:DD:EE:FF"
+            assert await client.power() is True
+            await client.disconnect()

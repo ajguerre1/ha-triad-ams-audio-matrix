@@ -52,6 +52,13 @@ class Fault(Enum):
     #: Answer correctly but name a different output. This is what a desynchronised stream looks
     #: like from the client's side: a well-formed, parseable response about the wrong zone.
     WRONG_OUTPUT = "wrong_output"
+    #: Answer correctly but name a different *input*. The same slip as WRONG_OUTPUT, on the
+    #: one family of responses that prints a 0-based index -- where an off-by-one looks like a
+    #: plausible reading rather than an error.
+    WRONG_INPUT = "wrong_input"
+    #: Answer correctly but name a different EQ *band*. A band is asked for by opcode, so a
+    #: slip here silently edits the wrong part of the spectrum.
+    WRONG_BAND = "wrong_band"
     #: Answer with a BURST of frames instead of one. Measured on real hardware: enabling audio
     #: sense returns roughly one AudioSense frame per input. A client assuming one response per
     #: command reads the surplus as answers to later queries and desyncs silently.
@@ -282,6 +289,10 @@ class AmsSimulator:
             return "Command error"
         if fault is Fault.WRONG_OUTPUT:
             answer = _rename_output(answer)
+        if fault is Fault.WRONG_INPUT:
+            answer = _rename_input(answer)
+        if fault is Fault.WRONG_BAND:
+            answer = _rename_band(answer)
         return answer
 
     def _dispatch(self, payload: bytes) -> str:
@@ -512,6 +523,17 @@ def _rename_output(answer: str) -> str:
     Produces the shape a frame-boundary slip produces: valid text, correct format, wrong zone.
     """
     return re.sub(r"Out\[(\d+)\]", lambda m: f"Out[{int(m.group(1)) + 1}]", answer, count=1)
+
+
+def _rename_input(answer: str) -> str:
+    """Shift the input index a response names. Covers both spellings the device uses."""
+    answer = re.sub(r"In\[(\d+)\]", lambda m: f"In[{int(m.group(1)) + 1}]", answer, count=1)
+    return re.sub(r"Input\[(\d+)\]", lambda m: f"Input[{int(m.group(1)) + 1}]", answer, count=1)
+
+
+def _rename_band(answer: str) -> str:
+    """Shift the band number a response names, leaving the output alone."""
+    return re.sub(r"Band (\d+)", lambda m: f"Band {int(m.group(1)) + 1}", answer, count=1)
 
 
 def _is_audio_sense_enable_set(payload: bytes) -> bool:
