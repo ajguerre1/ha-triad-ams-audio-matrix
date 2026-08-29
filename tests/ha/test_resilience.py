@@ -12,6 +12,8 @@ identical to one that correctly rides out a hiccup.
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 from homeassistant.const import STATE_UNAVAILABLE
 from homeassistant.core import HomeAssistant
@@ -351,3 +353,30 @@ class TestTheLastFewBranches:
         entry = await _setup(hass, simulator)
         base = TriadInputEntity(entry.runtime_data, entry, 1)
         assert base.registers_input_polling() is False
+
+
+class TestUnloadNeverHangs:
+    async def test_a_socket_that_will_not_close_is_given_up_on(
+        self, hass: HomeAssistant, simulator: AmsSimulator
+    ) -> None:
+        """Home Assistant blocks on unload, so a slow close must not become a stuck reload.
+
+        `disconnect` awaits `wait_closed`, and a socket to a matrix that has stopped answering can
+        sit there indefinitely. The timeout is the difference between a reload that takes a moment
+        and one that never finishes -- and reloads happen on every options change.
+        """
+        from unittest.mock import patch
+
+        entry = await _setup(hass, simulator)
+
+        async def _never_closes() -> None:
+            await asyncio.sleep(10)
+
+        with (
+            patch("custom_components.triad_ams.coordinator.SHUTDOWN_TIMEOUT", 0.05),
+            patch.object(entry.runtime_data.client, "disconnect", _never_closes),
+        ):
+            assert await hass.config_entries.async_unload(entry.entry_id), (
+                "unload gave up instead of timing out cleanly"
+            )
+            await hass.async_block_till_done()

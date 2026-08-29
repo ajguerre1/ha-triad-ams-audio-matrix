@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+from unittest import mock
 
 import pytest
 from ams import protocol as p
@@ -409,4 +410,41 @@ class TestTheDiagnosticReads:
             client = await _client(sim)
             drained = await client.send_bursty(p.set_audio_sense_enabled(enabled=True))
             assert drained > 0
+            await client.disconnect()
+
+    async def test_a_socket_that_fails_mid_burst_is_a_transport_error(self) -> None:
+        """Distinct from the device answering nothing: here the write itself fails, so the
+        connection is dropped rather than merely reported."""
+        async with AmsSimulator(inputs=8) as sim:
+            client = await _client(sim)
+            await client.firmware_version()
+            with (
+                mock.patch.object(client._writer, "drain", side_effect=OSError("gone")),
+                pytest.raises(TransportError, match="bursty write"),
+            ):
+                await client.set_audio_sense_enabled(enabled=True)
+            assert not client.connected, "the socket should have been dropped"
+
+
+class TestPaddedFramingHoldsBackWhatItOverreads:
+    async def test_a_byte_read_past_the_padding_is_kept_for_the_next_frame(self) -> None:
+        """The drain stops at the first non-NUL, and that byte belongs to the *next* frame.
+
+        Discarding it would truncate every following response by one character -- which parses
+        cleanly often enough to be dangerous. A burst on padded firmware is where two frames sit
+        back to back and the drain runs straight into the second.
+        """
+        async with AmsSimulator(outputs=8, inputs=8, padding=Padding.FIXED_150) as sim:
+            for output in range(1, 9):
+                sim.mutate(output, source=output)
+            client = await _client(sim)
+            await client.firmware_version()
+
+            sim.fail_next = Fault.BURST
+            with contextlib.suppress(TriadError):
+                await client.get_route(1)
+
+            # Whatever was held back must not have corrupted what follows.
+            for output in range(1, 9):
+                assert await client.get_route(output) == output, f"desync at output {output}"
             await client.disconnect()
