@@ -48,7 +48,7 @@ plausible-looking response text would make the tests agree with a misreading of 
 - [x] An undocumented audio-sense value reads as not-detected (A-02)
 - [x] `Command error` raises `CommandError`; unparseable text raises `ParseError`
 - [x] An empty frame is retryable (`CommandError`), not a parse failure
-- [ ] `MatrixSpec` replaces threaded counts; ASG index derives from the spec
+- [x] `MatrixSpec` replaces threaded counts; ASG index derives from the spec
 
 ### `ams/volume.py` — the taper
 
@@ -67,7 +67,8 @@ plausible-looking response text would make the tests agree with a misreading of 
 - [x] An empty frame is treated the same
 - [x] A refused connection and a mid-session disappearance both raise `TransportError`
 - [x] Concurrent commands are serialised onto one socket
-- [ ] A response naming a different output than the one asked about raises `ParseError`
+- [x] A response naming a different output than the one asked about raises `ParseError`
+      (regression-verified: removing the guard fails the test)
 
 ### Privacy
 
@@ -80,20 +81,25 @@ plausible-looking response text would make the tests agree with a misreading of 
 Against `tests/simulator.py`, which serves both framing personalities, injects faults, and can
 mutate state without a command — standing in for the Control4 controller that shares the hardware.
 
-- [ ] Setup creates one device and one `media_player` per active output
-- [ ] **Entity `unique_id` is exactly `{entry_id}_output_{n}`** — pins C-07; a refactor that
+In `tests/ha/` — **CI only**.
+
+- [x] Setup creates one device and one `media_player` per active output
+- [x] **Entity `unique_id` is exactly `{entry_id}_output_{n}`** — pins C-07; a refactor that
       changes it would silently orphan 26 live entities
-- [ ] Device `identifiers` are `{(DOMAIN, entry_id)}`
-- [ ] A config entry at VERSION 1 / MINOR_VERSION 4 loads without migration
-- [ ] A config entry from a newer schema is refused rather than corrupted
-- [ ] Options change reloads and adds/removes entities
+- [x] Device `identifiers` are `{(DOMAIN, entry_id)}`
+- [x] A config entry at VERSION 1 / MINOR_VERSION 4 loads without migration
+- [x] A config entry from a newer schema is refused rather than corrupted
+- [x] An unreachable matrix retries setup rather than creating dead entities
+- [x] Unloading closes cleanly — **the test that would have caught the phase 7 shutdown bug**
+- [x] Deselecting outputs leaves them registered and unavailable, and re-selecting restores the
+      identical entity_id
+- [x] **The integration never writes to the device on connect** — pins design decision D-05; the
+      Control4 driver does, and for a second controller that is destructive
+- [x] External mutation is picked up on the next poll (the Control4 case)
+- [x] Volume is capped by the per-output max **at the device**, not only on the slider
+- [x] Routing, turn-off and volume commands reach the device and read back
 - [ ] A per-output `CommandError` keeps that output's previous reading; others still update
 - [ ] A `TransportError` marks the matrix unavailable and stops early
-- [ ] **The integration never writes to the device on connect** — pins design decision D-05; the
-      Control4 driver does, and for a second controller that is destructive
-- [ ] External mutation is picked up on the next poll (the Control4 case)
-- [ ] A write is followed by a re-read of that output only
-- [ ] Volume is capped by the per-output max, including via step-up
 - [ ] Config flow: success, `cannot_connect`, and duplicate-matrix abort
 
 ## End-to-End Tests
@@ -111,6 +117,23 @@ mutate state without a command — standing in for the Control4 controller that 
 
 `pytest tests/ -v` locally for the offline suite; CI runs the full suite plus hassfest, HACS
 validation, ruff check and format, and the strings/translations parity diff.
+
+`tests/conftest.py` skips `tests/ha/` wherever Home Assistant is not importable — detected via
+`find_spec`, not by platform, since what matters is whether the dependency is present. The
+directory is ignored wholesale rather than by glob, because pytest loads a conftest before
+applying any file-level ignore.
+
+**Results, 2026-08-28**
+
+| Run | Where | Result |
+|---|---|---|
+| Offline suite | Windows dev box | **87 passed**, exit 0 |
+| Full suite | CI (Ubuntu) | **106 passed**, exit 0 |
+| `ruff check` / `ruff format --check` | Both | Clean, exit 0 |
+| hassfest, HACS validation, strings parity | CI | Pass |
+
+The 19-test gap between the two runs is exactly `tests/ha/`, and it is the part that cannot be
+verified locally at any point. CI is the gate for it.
 
 ## Manual Testing
 
