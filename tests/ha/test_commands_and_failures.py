@@ -10,11 +10,14 @@ nothing checked that any of those wrappers fired.
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import entity_registry as er
 
+from custom_components.triad_ams.coordinator import ROUTE_DEBOUNCE_SECONDS
 from tests.ha.conftest import make_entry
 from tests.simulator import AmsSimulator, Fault
 
@@ -76,7 +79,14 @@ class TestTheControls:
         await _setup(hass, simulator)
         await _mp(hass, "turn_off")
         assert simulator.state.channels[1].source is None
+
         await _mp(hass, "turn_on")
+        # turn_off and turn_on are two route commands inside the 250 ms window, so the second is
+        # coalesced into a trailing run rather than sent immediately. Waiting it out is the test
+        # acknowledging FR-13 rather than working around it -- asserting straight away reads the
+        # state before the coalesced write lands, which is exactly what this debounce is for.
+        await asyncio.sleep(ROUTE_DEBOUNCE_SECONDS + 0.15)
+        await hass.async_block_till_done()
         assert simulator.state.channels[1].source == 5
 
     async def test_volume_up_and_down_step_from_the_last_reading(
