@@ -200,6 +200,16 @@ class AmsClient:
         if p.is_command_error(text):
             raise CommandError(text or "empty response")
 
+    async def send_raw(self, command: bytes) -> str:
+        """Send one arbitrary command and return the decoded response.
+
+        Public because the diagnostic service needs it, and reaching into ``_exchange`` from
+        outside would make a private method part of the contract by accident. It carries no
+        guard of its own -- deciding whether a command is safe belongs to the caller that knows
+        what it was asked to do.
+        """
+        return await self._exchange(command)
+
     # -- reads --------------------------------------------------------------------------------
 
     async def firmware_version(self) -> str:

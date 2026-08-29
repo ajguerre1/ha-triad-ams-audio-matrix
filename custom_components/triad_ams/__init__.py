@@ -14,6 +14,7 @@ from .ams.errors import TransportError
 from .ams.settings import EntrySettings
 from .const import CONF_HOST, CONF_PORT, DEFAULT_PORT
 from .coordinator import TriadCoordinator
+from .services import async_setup_services
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -53,10 +54,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: TriadConfigEntry) -> boo
         active_inputs=settings.active_inputs,
         scan_interval=settings.scan_interval,
         name=entry.title,
+        entry_id=entry.entry_id,
     )
     await coordinator.async_config_entry_first_refresh()
 
     entry.runtime_data = coordinator
+    # Registered once for the integration, not per entry -- a second matrix must not replace
+    # the first one's services.
+    await async_setup_services(hass)
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     entry.async_on_unload(entry.add_update_listener(_async_reload_on_options_change))
     return True

@@ -1,0 +1,52 @@
+set_eq_band:
+  target:
+    entity:
+      integration: triad_ams
+      domain: number
+  fields:
+    frequency:
+      required: false
+      example: 1600
+      selector:
+        number:
+          min: 20
+          max: 20000
+          unit_of_measurement: Hz
+          mode: box
+    gain:
+      required: false
+      example: -3
+      selector:
+        number:
+          min: -12
+          max: 12
+          step: 0.5
+          unit_of_measurement: dB
+          mode: box
+    q:
+      required: false
+      example: 0.7
+      selector:
+        number:
+          min: 0.5
+          max: 3
+          step: 0.1
+          mode: box
+
+send_raw:
+  fields:
+    device_id:
+      required: true
+      selector:
+        device:
+          integration: triad_ams
+    command:
+      required: true
+      example: "FF5504031EF500"
+      selector:
+        text:
+    allow_write:
+      required: false
+      default: false
+      selector:
+        boolean:

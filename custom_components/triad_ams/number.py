@@ -14,10 +14,12 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
+import voluptuous as vol
 from homeassistant.components.number import NumberEntity, NumberMode
 from homeassistant.const import PERCENTAGE, UnitOfSoundPressure
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers import entity_platform
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
@@ -33,6 +35,11 @@ from .entity import TriadInputEntity, TriadOutputDspEntity
 TONE_MIN, TONE_MAX, TONE_STEP = -12.0, 12.0, 0.5
 
 EQ_BANDS = (1, 2, 3, 4, 5)
+
+SERVICE_SET_EQ_BAND = "set_eq_band"
+ATTR_FREQUENCY = "frequency"
+ATTR_GAIN = "gain"
+ATTR_Q = "q"
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -113,6 +120,21 @@ async def async_setup_entry(
         TriadInputGainNumber(coordinator, entry, source) for source in settings.active_inputs
     )
     async_add_entities(entities)
+
+    # An EQ band has three parameters spread across three entities. Setting them one at a time
+    # costs three round trips and three re-reads, and leaves the band in two intermediate shapes
+    # on the way. This sets all three, then re-reads once.
+    entity_platform.async_get_current_platform().async_register_entity_service(
+        SERVICE_SET_EQ_BAND,
+        {
+            vol.Optional(ATTR_FREQUENCY): vol.Coerce(float),
+            vol.Optional(ATTR_GAIN): vol.All(
+                vol.Coerce(float), vol.Range(min=TONE_MIN, max=TONE_MAX)
+            ),
+            vol.Optional(ATTR_Q): vol.Coerce(float),
+        },
+        "async_set_band",
+    )
 
 
 class TriadNumberBase(TriadOutputDspEntity, NumberEntity):
@@ -202,6 +224,33 @@ class TriadEqGainNumber(TriadNumberBase):
 
     async def async_set_native_value(self, value: float) -> None:
         await self._apply(self.coordinator.client.set_eq_gain(self._output, self._band, value))
+
+    async def async_set_band(
+        self,
+        frequency: float | None = None,
+        gain: float | None = None,
+        q: float | None = None,
+    ) -> None:
+        """Set any combination of this band's three parameters, then re-read once.
+
+        Omitted parameters are left alone rather than defaulted, so calling with only ``gain``
+        does not quietly reset the frequency someone tuned by ear.
+        """
+        if frequency is None and gain is None and q is None:
+            msg = "give at least one of frequency, gain or q"
+            raise HomeAssistantError(msg)
+        client = self.coordinator.client
+        try:
+            if frequency is not None:
+                await client.set_eq_frequency(self._output, self._band, frequency)
+            if gain is not None:
+                await client.set_eq_gain(self._output, self._band, gain)
+            if q is not None:
+                await client.set_eq_q(self._output, self._band, q)
+        except TriadError as err:
+            msg = f"command failed for output {self._output} band {self._band}: {err}"
+            raise HomeAssistantError(msg) from err
+        await self.coordinator.async_refresh_output_dsp(self._output)
 
 
 class TriadInputGainNumber(TriadInputEntity, NumberEntity):

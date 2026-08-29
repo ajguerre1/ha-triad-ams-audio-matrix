@@ -26,6 +26,7 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 
 from .ams.client import AmsClient
 from .ams.errors import CommandError, ParseError, TransportError
+from .repairs import async_check_audio_sense
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -112,6 +113,7 @@ class TriadCoordinator(DataUpdateCoordinator[MatrixSnapshot]):
         active_inputs: list[int] | None = None,
         scan_interval: int,
         name: str,
+        entry_id: str = "",
     ) -> None:
         super().__init__(
             hass,
@@ -120,6 +122,7 @@ class TriadCoordinator(DataUpdateCoordinator[MatrixSnapshot]):
             update_interval=timedelta(seconds=scan_interval),
         )
         self.client = client
+        self.entry_id = entry_id
         self.active_outputs = active_outputs
         self.active_inputs = active_inputs or []
         #: Entities that want input data register here. Disabled entities are never added to Home
@@ -228,7 +231,7 @@ class TriadCoordinator(DataUpdateCoordinator[MatrixSnapshot]):
             )
         sense, enabled = await self._read_audio_sense()
         firmware, delay = await self._read_static()
-        return MatrixSnapshot(
+        snapshot = MatrixSnapshot(
             outputs=snapshots,
             audio_sense=sense,
             audio_sense_enabled=enabled,
@@ -237,6 +240,18 @@ class TriadCoordinator(DataUpdateCoordinator[MatrixSnapshot]):
             dsp=await self._read_dsp(),
             triggers=await self._read_triggers(),
             input_gains=await self._read_input_gains(),
+        )
+        self._check_issues(snapshot)
+        return snapshot
+
+    def _check_issues(self, snapshot: MatrixSnapshot) -> None:
+        """Raise or clear repair issues from what the poll just learned."""
+        async_check_audio_sense(
+            self.hass,
+            self.entry_id,
+            self.name or "",
+            enabled=snapshot.audio_sense_enabled,
+            consumers=self.polls_inputs,
         )
 
     async def _read_input_gains(self) -> dict[int, float]:

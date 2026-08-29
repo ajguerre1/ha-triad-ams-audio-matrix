@@ -58,5 +58,49 @@
         }
       }
     }
+  },
+  "issues": {
+    "audio_sense_disabled": {
+      "title": "Audio sense is switched off on {matrix}",
+      "description": "You have enabled audio-sense entities for **{matrix}**, but the matrix is not measuring, so they will stay unavailable.\n\nThe device reports the same value for \"no audio\" and \"not measuring\", so this cannot be shown as simply off without asserting something the hardware has not determined.\n\n**This is not changed in Home Assistant.** The setting lives in the Control4 driver for this matrix: set `SET_DISABLE_AUDIO_SENSE` to `DISABLED = false`. Changing it on the device instead does not last -- the driver re-asserts its own value every time it reconnects.\n\nIf you did not intend to use audio sense, disable those entities and this will clear."
+    }
+  },
+  "services": {
+    "set_eq_band": {
+      "name": "Set EQ band",
+      "description": "Set a band's frequency, gain and Q together. Omitted values are left alone, and the band is re-read once at the end rather than after each parameter.",
+      "fields": {
+        "frequency": {
+          "name": "Frequency",
+          "description": "Centre frequency in Hz. Snapped to the nearest band the matrix offers."
+        },
+        "gain": {
+          "name": "Gain",
+          "description": "Band gain in dB, -12 to +12."
+        },
+        "q": {
+          "name": "Q",
+          "description": "Band Q. The matrix offers 0.5, 0.6, 0.7, 0.8, 0.9, 1, 2 and 3."
+        }
+      }
+    },
+    "send_raw": {
+      "name": "Send raw command",
+      "description": "Send one protocol command and return the reply. For reading something the integration does not model yet.",
+      "fields": {
+        "device_id": {
+          "name": "Matrix",
+          "description": "Which matrix to send to."
+        },
+        "command": {
+          "name": "Command",
+          "description": "Hex, starting FF 55. For example FF5504031EF500 reads output 1's volume."
+        },
+        "allow_write": {
+          "name": "Allow writing",
+          "description": "Required for any command without the F5 query marker. Those change the device, and it accepts out-of-range writes silently, so this is off by default."
+        }
+      }
+    }
   }
 }
