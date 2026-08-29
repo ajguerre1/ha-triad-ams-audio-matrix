@@ -69,6 +69,11 @@ _FREQ_HZ = (
     2000, 2500, 3150, 4000, 5000, 6300, 8000, 10000, 12500, 16000, 20000,
 )  # fmt: skip
 
+#: Q values by index, measured on real hardware. Indices above 7 clamp to 3 on the device, and
+#: this double reproduces that -- a client that sends an out-of-range index must not appear to
+#: have set something the hardware ignored.
+_Q_VALUES = (0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 2.0, 3.0)
+
 
 @dataclass
 class OutputState:
@@ -83,7 +88,7 @@ class OutputState:
     turn_on_step: int = 0
     band_freq: list[int] = field(default_factory=lambda: list(DEFAULT_BAND_INDICES))
     band_gain: list[float] = field(default_factory=lambda: [0.0] * 5)
-    band_q: list[float] = field(default_factory=lambda: [0.7] * 5)
+    band_q: list[int] = field(default_factory=lambda: [2] * 5)  # index 2 == Q 0.7
 
 
 @dataclass
@@ -374,7 +379,8 @@ class AmsSimulator:
             channel.band_gain[band] = rest[1] / 2 - 12
             return f"Set Out[{output}] Band {band + 1} Gain"
         if query:
-            return f"Get Out[{output}] Band {band + 1} Q : {channel.band_q[band]:g}"
+            index = min(channel.band_q[band], len(_Q_VALUES) - 1)
+            return f"Get Out[{output}] Band {band + 1} Q : {_Q_VALUES[index]:g}"
         channel.band_q[band] = rest[1]
         return f"Set Out[{output}] Band {band + 1} Q"
 

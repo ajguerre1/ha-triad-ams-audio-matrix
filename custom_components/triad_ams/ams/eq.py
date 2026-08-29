@@ -42,6 +42,19 @@ MAX_FREQUENCY_INDEX: Final = len(EQ_FREQUENCIES) - 1
 
 _UNITS: Final[dict[str, float]] = {"hz": 1.0, "khz": 1000.0}
 
+#: Q values, indexed by the device's 0..7 band-Q value.
+#:
+#: Measured 2026-08-29 by sweeping the index on an output that was unrouted, at minimum volume and
+#: muted, then restoring it -- verified on a fresh connection afterwards. Unlike the frequency
+#: table, none of this is inferred.
+#:
+#: The device clamps: any index above 7 reports Q 3. That makes an out-of-range write harmless,
+#: but it also means a caller must constrain to the real range or a user will believe they set
+#: something the hardware quietly ignored.
+EQ_Q_VALUES: Final[tuple[float, ...]] = (0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 2.0, 3.0)
+
+MAX_Q_INDEX: Final = len(EQ_Q_VALUES) - 1
+
 
 def parse_frequency_text(text: str) -> float:
     """``1.6 kHz`` -> ``1600.0``. Raises ValueError if the unit is missing or unknown."""
@@ -75,3 +88,24 @@ def format_frequency(hz: float) -> str:
         khz = hz / 1000
         return f"{khz:g} kHz"
     return f"{hz:g} Hz"
+
+
+def q_for_index(index: int) -> float:
+    if not 0 <= index <= MAX_Q_INDEX:
+        msg = f"EQ Q index {index} outside 0..{MAX_Q_INDEX}"
+        raise ValueError(msg)
+    return EQ_Q_VALUES[index]
+
+
+def index_for_q(q: float) -> int:
+    """Nearest table index for a Q value.
+
+    Nearest rather than exact so a value read back from the device -- which prints ``1`` for 1.0
+    and ``3`` for 3.0 -- lands on the index it came from.
+    """
+    return min(range(len(EQ_Q_VALUES)), key=lambda i: abs(EQ_Q_VALUES[i] - q))
+
+
+def format_q(q: float) -> str:
+    """Label a Q the way the device prints it: ``0.7``, ``1``, ``3``."""
+    return f"{q:g}"

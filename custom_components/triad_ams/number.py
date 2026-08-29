@@ -186,9 +186,9 @@ class TriadEqGainNumber(TriadNumberBase):
     def extra_state_attributes(self) -> dict[str, float] | None:
         """Frequency and Q, so the band reads as a band rather than a bare number.
 
-        Q is here rather than as its own entity because it is not settable: the device takes a raw
-        index for it and the index-to-value table has not been measured. Showing it read-only is
-        honest; a slider that set the wrong Q would not be.
+        Both are also settable in their own right, as selects. Duplicating them here is not
+        redundancy: reading a band's shape off one entity beats opening three, and a template or
+        automation can get the whole band from a single state object.
         """
         band = self.band(self._band)
         if band is None:

@@ -154,6 +154,36 @@ FF 55 04 03 <op> F5 <out>         query
 Responses report **human units**, not the raw index: `Get Out[1] Band 1 Freq : 63 Hz`,
 `Band 1 Gain : 0`, `Band 1 Q : 0.7`. Gain uses the same `(12 + dB) * 2` encoding as bass/treble.
 
+#### Frequency — index 0–30, ISO 1/3-octave
+
+The endpoints are documented in the Control4 driver: `0x00` is 20 Hz, `0x1E` (30) is 20 kHz. 31
+steps across that span is exactly the ISO 1/3-octave series, and every frequency observed on real
+hardware is a member of it:
+
+```
+20  25  31.5  40  50  63  80  100  125  160  200  250  315  400  500  630  800
+1k  1.25k  1.6k  2k  2.5k  3.15k  4k  5k  6.3k  8k  10k  12.5k  16k  20k
+```
+
+Factory band defaults are 63 Hz, 250 Hz, 1 kHz, 4 kHz, 20 kHz — indices 5, 11, 17, 23 and 30.
+
+**Read the unit, not just the number.** Everything above 1 kHz reports with a `kHz` suffix, so a
+regex that takes the digits and ignores the unit turns `1.6 kHz` into `1.6 Hz`.
+
+#### Q — index 0–7, eight discrete values, measured
+
+| Index | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 |
+|---|---|---|---|---|---|---|---|---|
+| Q | 0.5 | 0.6 | 0.7 | 0.8 | 0.9 | 1 | 2 | 3 |
+
+Measured 2026-08-29 by sweeping the index on an output that was unrouted, at minimum volume and
+muted, then restoring it and verifying on a fresh connection. Factory default is index 2 (Q 0.7)
+on every band.
+
+**Anything above index 7 clamps to Q 3** rather than erroring, so an out-of-range write appears to
+succeed while doing something else. A client must constrain to 0–7 rather than rely on the device
+to reject.
+
 ### Inputs
 
 | Operation | Bytes | Response |

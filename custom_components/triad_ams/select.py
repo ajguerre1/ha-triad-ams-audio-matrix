@@ -18,7 +18,13 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from . import TriadConfigEntry
-from .ams.eq import EQ_FREQUENCIES, format_frequency, parse_frequency_text
+from .ams.eq import (
+    EQ_FREQUENCIES,
+    EQ_Q_VALUES,
+    format_frequency,
+    format_q,
+    parse_frequency_text,
+)
 from .ams.errors import TriadError
 from .ams.settings import EntrySettings
 from .coordinator import TriadCoordinator
@@ -29,6 +35,9 @@ EQ_BANDS = (1, 2, 3, 4, 5)
 #: Labels in table order, so the picker reads low-to-high like every EQ ever built.
 FREQUENCY_OPTIONS: list[str] = [format_frequency(hz) for hz in EQ_FREQUENCIES]
 
+#: Q labels in table order. Eight discrete values, measured -- not a continuous range.
+Q_OPTIONS: list[str] = [format_q(q) for q in EQ_Q_VALUES]
+
 
 async def async_setup_entry(
     hass: HomeAssistant,
@@ -38,11 +47,12 @@ async def async_setup_entry(
     """One frequency selector per EQ band per active output."""
     coordinator = entry.runtime_data
     settings = EntrySettings.resolve(entry.data, entry.options)
-    async_add_entities(
-        TriadEqFrequencySelect(coordinator, entry, output, band)
-        for output in settings.active_outputs
-        for band in EQ_BANDS
-    )
+    entities: list[SelectEntity] = []
+    for output in settings.active_outputs:
+        for band in EQ_BANDS:
+            entities.append(TriadEqFrequencySelect(coordinator, entry, output, band))
+            entities.append(TriadEqQSelect(coordinator, entry, output, band))
+    async_add_entities(entities)
 
 
 class TriadEqFrequencySelect(TriadOutputDspEntity, SelectEntity):
@@ -80,6 +90,51 @@ class TriadEqFrequencySelect(TriadOutputDspEntity, SelectEntity):
             raise HomeAssistantError(msg) from err
         try:
             await self.coordinator.client.set_eq_frequency(self._output, self._band, hz)
+        except TriadError as err:
+            msg = f"command failed for output {self._output}: {err}"
+            raise HomeAssistantError(msg) from err
+        await self.coordinator.async_refresh_output_dsp(self._output)
+
+
+class TriadEqQSelect(TriadOutputDspEntity, SelectEntity):
+    """The Q of one EQ band.
+
+    A select for the same reason frequency is: the device takes an index into a table, and the
+    table has only eight entries -- 0.5, 0.6, 0.7, 0.8, 0.9, 1, 2, 3. A slider would imply a
+    continuum that does not exist, and the device clamps anything past the end to Q 3, so an
+    out-of-range request would appear to succeed while being ignored.
+
+    The table was measured rather than inferred: swept on an output that was unrouted, at minimum
+    volume and muted, then restored and verified on a fresh connection.
+    """
+
+    _attr_entity_registry_enabled_default = False
+    _attr_options = Q_OPTIONS
+
+    def __init__(
+        self,
+        coordinator: TriadCoordinator,
+        entry: TriadConfigEntry,
+        output: int,
+        band: int,
+    ) -> None:
+        super().__init__(coordinator, entry, output, f"eq_band_{band}_q")
+        self._band = band
+        self._attr_name = f"EQ band {band} Q"
+
+    @property
+    def current_option(self) -> str | None:
+        band = self.band(self._band)
+        return format_q(band.q) if band else None
+
+    async def async_select_option(self, option: str) -> None:
+        try:
+            q = float(option)
+        except ValueError as err:
+            msg = f"{option!r} is not a Q this matrix offers"
+            raise HomeAssistantError(msg) from err
+        try:
+            await self.coordinator.client.set_eq_q(self._output, self._band, q)
         except TriadError as err:
             msg = f"command failed for output {self._output}: {err}"
             raise HomeAssistantError(msg) from err

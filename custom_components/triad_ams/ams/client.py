@@ -25,7 +25,7 @@ import logging
 from typing import Final
 
 from . import protocol as p
-from .eq import index_for_frequency
+from .eq import index_for_frequency, index_for_q
 from .errors import CommandError, ParseError, TransportError
 from .model import MODELS, MatrixSpec
 from .volume import step_for_db
@@ -368,3 +368,12 @@ class AmsClient:
 
     async def set_eq_gain(self, output: int, band: int, db: float) -> None:
         await self._write(p.set_eq_gain(self.spec, output, band, db))
+
+    async def set_eq_q(self, output: int, band: int, q: float) -> None:
+        """Set a band's Q, given as the Q value itself.
+
+        Converted to the device's table index here, so no caller handles the raw index. The device
+        clamps anything above the table to Q 3, which would silently ignore an out-of-range
+        request -- converting through the table is what stops that being possible.
+        """
+        await self._write(p.set_eq_q(self.spec, output, band, index_for_q(q)))

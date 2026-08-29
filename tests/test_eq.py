@@ -5,11 +5,16 @@ from __future__ import annotations
 import pytest
 from ams.eq import (
     EQ_FREQUENCIES,
+    EQ_Q_VALUES,
     MAX_FREQUENCY_INDEX,
+    MAX_Q_INDEX,
     format_frequency,
+    format_q,
     frequency_for_index,
     index_for_frequency,
+    index_for_q,
     parse_frequency_text,
+    q_for_index,
 )
 
 
@@ -74,3 +79,40 @@ class TestRoundTrip:
         assert format_frequency(1000) == "1 kHz"
         assert format_frequency(1600) == "1.6 kHz"
         assert format_frequency(20000) == "20 kHz"
+
+
+class TestTheQTable:
+    """Measured 2026-08-29, not inferred.
+
+    Swept the index on an AMS8 output that was unrouted, at minimum volume and muted, then
+    restored it and verified on a fresh connection. Eight discrete values and a hard clamp.
+    """
+
+    def test_it_has_the_eight_values_the_device_offers(self) -> None:
+        assert EQ_Q_VALUES == (0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 2.0, 3.0)
+        assert MAX_Q_INDEX == 7
+
+    def test_indices_map_to_the_values_the_hardware_reported(self) -> None:
+        assert q_for_index(0) == 0.5
+        assert q_for_index(2) == 0.7  # the factory default on every band
+        assert q_for_index(7) == 3.0
+
+    @pytest.mark.parametrize("index", [-1, 8, 47])
+    def test_an_index_outside_the_table_is_refused(self, index: int) -> None:
+        """The device CLAMPS anything above 7 to Q 3 rather than rejecting it.
+
+        So an out-of-range write would appear to succeed while quietly doing something else.
+        Refusing here is what stops a caller believing it set Q 5.
+        """
+        with pytest.raises(ValueError):
+            q_for_index(index)
+
+    def test_every_q_survives_a_round_trip_through_the_devices_text(self) -> None:
+        """The device prints 1 for 1.0 and 3 for 3.0, so the label must map back to its index."""
+        for index in range(MAX_Q_INDEX + 1):
+            assert index_for_q(float(format_q(q_for_index(index)))) == index
+
+    def test_labels_drop_the_trailing_zero(self) -> None:
+        assert format_q(0.7) == "0.7"
+        assert format_q(1.0) == "1"
+        assert format_q(3.0) == "3"
