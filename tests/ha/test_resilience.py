@@ -13,6 +13,7 @@ identical to one that correctly rides out a hiccup.
 from __future__ import annotations
 
 import asyncio
+import logging
 
 import pytest
 from homeassistant.const import STATE_UNAVAILABLE
@@ -212,13 +213,36 @@ class TestTurnOnVolumeStorageFailing:
     async def test_a_refused_store_is_swallowed(
         self, hass: HomeAssistant, simulator: AmsSimulator
     ) -> None:
-        """It is a follow-up to a write that already succeeded, so failing loudly would report a
-        volume change as broken when the volume did change."""
+        """It is a follow-up to a write that already succeeded, so *raising* would report a
+        volume change as broken when the volume did change. Staying quiet about it is a separate
+        question, answered by the next test."""
         entry = await _setup(hass, simulator)
         coordinator = entry.runtime_data
         simulator.fail_matching = "ff5504033300"  # the turn-on write for output 1
         await coordinator._store_turn_on_volume(1)
         await hass.async_block_till_done()
+
+    async def test_a_refused_store_is_still_recorded(
+        self, hass: HomeAssistant, simulator: AmsSimulator, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Swallowed is not the same as unrecorded -- AV-21.
+
+        Not raising is right. Logging at **debug** is not, and that is what this was doing. The
+        consequence outlives the request that caused it: a zone comes on at its turn-on register,
+        so a write that quietly fails leaves that zone coming on at a volume nobody chose -- with
+        nothing above debug in the log, and no entity showing the register by default.
+        """
+        entry = await _setup(hass, simulator)
+        coordinator = entry.runtime_data
+        simulator.fail_matching = "ff5504033300"
+
+        with caplog.at_level(logging.DEBUG):
+            await coordinator._store_turn_on_volume(1)
+            await hass.async_block_till_done()
+
+        assert [
+            r for r in caplog.records if r.levelno >= logging.WARNING and "turn-on" in r.message
+        ], "a failed turn-on write must be visible above debug"
 
     async def test_it_re_reads_the_dsp_when_something_is_displaying_it(
         self, hass: HomeAssistant, simulator: AmsSimulator
