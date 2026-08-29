@@ -165,3 +165,21 @@ class TestTurnOnRegisterIsObservable:
         diagnostics = await async_get_config_entry_diagnostics(hass, entry)
 
         assert diagnostics["state"]["turn_on_volume"]["1"] == 97
+
+    async def test_a_register_that_will_not_read_reports_none(
+        self, hass: HomeAssistant, simulator: AmsSimulator
+    ) -> None:
+        """One unreadable register must not cost the whole download.
+
+        Someone requesting diagnostics is already troubleshooting. A partial answer is worth more
+        to them than an exception, so a refused read reports ``None`` for that output and the rest
+        are still reported.
+        """
+        entry = await _setup(hass, simulator)
+        simulator.fail_matching = "ff55040333f500"  # the turn-on query for output 1
+
+        diagnostics = await async_get_config_entry_diagnostics(hass, entry)
+
+        registers = diagnostics["state"]["turn_on_volume"]
+        assert registers["1"] is None
+        assert [k for k, v in registers.items() if v is not None], "the others must still report"
