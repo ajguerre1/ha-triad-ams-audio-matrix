@@ -168,7 +168,16 @@ matrix has no record of. See the design doc's "FR-07 grouping — withdrawn, on 
    migration window, then retired: after decommissioning there is no second controller to reconcile
    with. Replaced by criteria 7-8 below.
 4. hassfest, HACS validation, ruff and pytest all pass in CI.
-5. Rollback to the previous integration is rehearsed and works.
+5. ~~Rollback to the previous integration is rehearsed and works.~~ — **withdrawn 2026-08-29,
+   after the cutover verified clean.** The owner will not return to the third-party integration, so
+   rehearsing the path has no value. Recorded as withdrawn rather than left open: an unmet
+   criterion and an abandoned one look identical in a checklist, and only one of them is a problem.
+
+   **The consequence is worth stating.** Several cutover decisions were argued as safe *because*
+   rollback existed. Recovery now means forward-fix — diagnose, patch, push, reinstall — so a green
+   CI run is the last gate before a live A/V system rather than the first of two. What survives is
+   the config-entry restore point, which guards against entry *loss*; that is a different failure
+   from wanting the old integration back, and it would orphan all 27 zone entities.
 6. No site data — addresses, MACs, room, zone or source names — reaches the public repository.
 7. **Every capability Control4 provides for the matrices is reachable from Home Assistant, or is
    recorded as a deliberate non-goal with a reason.** This is the decommissioning bar: the gap
@@ -214,8 +223,9 @@ decision, not a requirement; what the requirement records is that its *justifica
 
 - **The two integrations cannot run side by side.** They share the `triad_ams` domain, so
   validating the new one against the live system before cutover is impossible. Cutover is
-  therefore direct, with a `.storage` backup, a pre-captured entity baseline, and a rehearsed
-  rollback. *(Owner decision, 2026-08-28; a throwaway HA instance was offered and declined.)*
+  therefore direct, with a `.storage` backup and a pre-captured entity baseline. *(Owner decision,
+  2026-08-28; a throwaway HA instance was offered and declined.)* ~~and a rehearsed rollback~~ —
+  the rollback half was dropped 2026-08-29 once the cutover verified clean; see criterion 5.
 
 **Named assumptions**
 
