@@ -17,12 +17,8 @@ DOMAIN: Final = "triad_ams"
 DEFAULT_PORT: Final = 52000
 DEFAULT_NAME: Final = "Triad AMS"
 
-#: The device announces neither its model nor its channel count, so setup has to ask.
-MODELS: Final[dict[str, tuple[int, int]]] = {
-    "AMS8": (8, 8),
-    "AMS16": (16, 16),
-    "AMS24": (24, 24),
-}
+#: The model table lives in ``ams/model.py`` as MatrixSpec objects, so that the channel counts
+#: and the indices derived from them cannot drift apart.
 
 # -- config entry data keys. Frozen for drop-in compatibility; see the module docstring. -------
 CONF_NAME: Final = "name"
@@ -43,7 +39,9 @@ CONF_OUTPUT_MAX_VOLUMES: Final = "output_max_volumes"
 CONF_SCAN_INTERVAL: Final = "scan_interval"
 DEFAULT_SCAN_INTERVAL: Final = 30
 
-#: Percentage, as the options flow presents it.
+#: Percentage, as the options flow presents it. Equal to ``ams.volume.MAX_STEP`` by construction
+#: -- the device's step scale IS 0..100 -- and re-exported here only so the config flow does not
+#: reach into the device layer for a UI bound.
 MAX_VOLUME_PERCENT: Final = 100
 
 #: Entity unique_ids are ``{entry_id}_output_{n}``. Changing this orphans every existing entity

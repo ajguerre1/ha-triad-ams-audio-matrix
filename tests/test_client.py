@@ -10,7 +10,8 @@ import asyncio
 
 import pytest
 from ams.client import AmsClient
-from ams.errors import CommandError, TransportError
+from ams.errors import CommandError, ParseError, TransportError
+from ams.model import MatrixSpec
 
 from tests.simulator import AmsSimulator, Fault, Padding
 
@@ -18,9 +19,7 @@ pytestmark = pytest.mark.enable_socket
 
 
 async def _client(sim: AmsSimulator) -> AmsClient:
-    return AmsClient(
-        "127.0.0.1", sim.port, output_count=sim.state.outputs, input_count=sim.state.inputs
-    )
+    return AmsClient("127.0.0.1", sim.port, spec=MatrixSpec.for_model(sim.state.model))
 
 
 class TestExchange:
@@ -108,6 +107,24 @@ class TestFaults:
             with pytest.raises(CommandError):
                 await client.get_route(1)
             assert client.connected
+            await client.disconnect()
+
+    async def test_a_response_about_a_different_output_is_rejected(self) -> None:
+        """The desync guard, tested directly rather than only via the framing scenarios.
+
+        Every response names the output it describes. When that disagrees with the output asked
+        about, the stream has slipped and the value belongs to another zone -- so it must raise
+        rather than be believed. Without this check the failure is invisible: the text parses
+        cleanly and the only symptom is zones reporting each other's state.
+
+        Characterising existing behaviour, brought under test during design reconciliation.
+        """
+        async with AmsSimulator() as sim:
+            client = await _client(sim)
+            await client.firmware_version()
+            sim.fail_next = Fault.WRONG_OUTPUT
+            with pytest.raises(ParseError):
+                await client.get_route(1)
             await client.disconnect()
 
     async def test_a_refused_connection_raises_a_transport_error(self) -> None:

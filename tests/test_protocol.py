@@ -10,57 +10,61 @@ from __future__ import annotations
 import pytest
 from ams import protocol as p
 from ams.errors import CommandError, ParseError
+from ams.model import MatrixSpec
+
+AMS8 = MatrixSpec.for_model("AMS8")
+AMS24 = MatrixSpec.for_model("AMS24")
 
 
 class TestCommandFraming:
     def test_a_query_sets_the_length_byte_to_match_its_extra_marker(self) -> None:
         # The set form carries output+value; the query form carries the F5 marker plus output.
-        assert p.set_output_volume(1, 0x05) == bytes.fromhex("FF5504031E0005")
-        assert p.query_output_volume(1) == bytes.fromhex("FF5504031EF500")
+        assert p.set_output_volume(AMS24, 1, 0x05) == bytes.fromhex("FF5504031E0005")
+        assert p.query_output_volume(AMS24, 1) == bytes.fromhex("FF5504031EF500")
 
     def test_indices_go_on_the_wire_zero_based(self) -> None:
         """Responses print 1-based, so the whole codebase speaks 1-based and converts here."""
-        assert p.query_output_volume(1)[-1] == 0
-        assert p.query_output_volume(24)[-1] == 23
+        assert p.query_output_volume(AMS24, 1)[-1] == 0
+        assert p.query_output_volume(AMS24, 24)[-1] == 23
 
     @pytest.mark.parametrize("output", [0, -1, 25])
     def test_an_output_outside_the_matrix_is_refused_before_it_reaches_the_wire(
         self, output: int
     ) -> None:
         with pytest.raises(ValueError):
-            p.query_output_volume(output, output_count=24)
+            p.query_output_volume(AMS24, output)
 
     def test_routing_carries_both_indices_zero_based(self) -> None:
-        assert p.set_route(output=7, source=7) == bytes.fromhex("FF5504031D0606")
+        assert p.set_route(AMS24, output=7, source=7) == bytes.fromhex("FF5504031D0606")
 
     def test_disconnecting_routes_one_past_the_last_input(self) -> None:
         """There is no disconnect opcode; 'off' is an out-of-range input index."""
-        assert p.disconnect_output(1, input_count=8) == bytes.fromhex("FF5504031D0008")
-        assert p.disconnect_output(1, input_count=24) == bytes.fromhex("FF5504031D0018")
+        assert p.disconnect_output(AMS8, 1) == bytes.fromhex("FF5504031D0008")
+        assert p.disconnect_output(AMS24, 1) == bytes.fromhex("FF5504031D0018")
 
     def test_the_mute_query_uses_the_length_byte_that_actually_works(self) -> None:
         """The Control4 driver's own constant declares 03 here, and the device rejects it.
 
         Captured: FF55030317F500 -> 'Command error'; FF55040317F500 -> the mute status.
         """
-        assert p.query_output_mute(1) == bytes.fromhex("FF55040317F500")
+        assert p.query_output_mute(AMS24, 1) == bytes.fromhex("FF55040317F500")
 
     def test_eq_opcodes_are_a_base_plus_the_band_index(self) -> None:
-        assert p.query_eq_frequency(1, band=1) == bytes.fromhex("FF55040320F500")
-        assert p.query_eq_frequency(1, band=5) == bytes.fromhex("FF55040324F500")
-        assert p.query_eq_gain(1, band=1) == bytes.fromhex("FF55040325F500")
-        assert p.query_eq_q(1, band=1) == bytes.fromhex("FF5504032AF500")
+        assert p.query_eq_frequency(AMS24, 1, band=1) == bytes.fromhex("FF55040320F500")
+        assert p.query_eq_frequency(AMS24, 1, band=5) == bytes.fromhex("FF55040324F500")
+        assert p.query_eq_gain(AMS24, 1, band=1) == bytes.fromhex("FF55040325F500")
+        assert p.query_eq_q(AMS24, 1, band=1) == bytes.fromhex("FF5504032AF500")
 
     @pytest.mark.parametrize("band", [0, 6])
     def test_an_eq_band_outside_one_to_five_is_refused(self, band: int) -> None:
         with pytest.raises(ValueError):
-            p.query_eq_gain(1, band=band)
+            p.query_eq_gain(AMS24, 1, band=band)
 
     def test_the_asg_trigger_opcode_depends_on_the_model(self) -> None:
         """An 8x8 has no 9-16 bank, so ASG reuses that opcode. Getting this wrong on a 24x24
         toggles the wrong bank silently."""
-        assert p.set_trigger_asg(True, output_count=8) == bytes.fromhex("FF5503055001")
-        assert p.set_trigger_asg(True, output_count=24) == bytes.fromhex("FF5503055003")
+        assert p.set_trigger_asg(AMS8, on=True) == bytes.fromhex("FF5503055001")
+        assert p.set_trigger_asg(AMS24, on=True) == bytes.fromhex("FF5503055003")
 
 
 class TestFrameDecoding:

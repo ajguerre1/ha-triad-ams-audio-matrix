@@ -64,7 +64,7 @@ other two because they have no common resource to block on.
 ```python
 @dataclass(frozen=True, slots=True)
 class MatrixSpec:
-    name: str          # "AMS8" | "AMS16" | "AMS24"
+    name: str  # "AMS8" | "AMS16" | "AMS24"
     outputs: int
     inputs: int
 ```
@@ -84,8 +84,8 @@ site. On a `MatrixSpec` it becomes `spec.asg_index`, defined once.
 ```python
 @dataclass(frozen=True, slots=True)
 class OutputSnapshot:
-    source: int | None      # 1-based input, None = Audio Off
-    volume_step: int        # 0..100
+    source: int | None  # 1-based input, None = Audio Off
+    volume_step: int  # 0..100
     muted: bool
     # Populated only when a consumer is enabled — see "Tiered polling"
     tone: ToneSnapshot | None = None

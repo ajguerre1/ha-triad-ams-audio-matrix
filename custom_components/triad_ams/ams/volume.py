@@ -16,7 +16,9 @@ from __future__ import annotations
 
 from bisect import bisect_left
 
-#: Highest step the device accepts (0x64).
+#: The step range the device accepts, 0x00..0x64. Defined here and only here: this module owns
+#: the volume scale, and a second copy in the protocol module is a constant waiting to drift.
+MIN_STEP = 0
 MAX_STEP = 100
 
 #: Decibels reported for each step, indexed by step. Ascending, which ``step_for_db`` relies on.
