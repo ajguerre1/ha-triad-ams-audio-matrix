@@ -220,9 +220,9 @@ applying any file-level ignore.
 
 | Run | Where | Result |
 |---|---|---|
-| Offline suite | Windows dev box | **149 passed**, exit 0 |
-| Full suite | CI (Ubuntu) | **245 passed**, exit 0 |
-| Coverage | CI | **90%** overall; `config_flow` **100%** |
+| Offline suite | Windows dev box | **181 passed**, exit 0 |
+| Full suite | CI (Ubuntu) | **341 passed**, exit 0 |
+| Coverage | CI | **100%** — 1936 statements, 0 missed |
 | `ruff check` / `ruff format --check` | Both | Clean, exit 0 |
 | hassfest, HACS validation, strings parity | CI | Pass |
 
@@ -230,35 +230,41 @@ applying any file-level ignore.
 for `ams/` alone and understates it, because everything the entities exercise is invisible to a
 suite that cannot import Home Assistant. Measured where the whole suite runs:
 
-| Area | Coverage |
+**Every module is at 100%.** The suite reached it on 2026-08-29, from 88%, and two of the last
+lines were closed by *deleting* code rather than testing it — see below.
+
+| Suite | Tests |
 |---|---|
-| `ams/eq`, `errors`, `model`, `presets`, `settings`, `volume` | **100%** |
-| `ams/client` | 94% |
-| `ams/protocol` | 88% |
-| `__init__`, `binary_sensor`, `config_flow`, `const`, `diagnostics` | **100%** |
-| `entity`, `sensor` | 96-97% |
-| `number`, `switch`, `repairs` | 90-91% |
-| `services` | 87% |
-| `coordinator` | 83% |
-| `media_player`, `select` | 72-74% |
-| **Total** | **90%** |
+| Offline (`ams/`, protocol, simulator) | 181 |
+| Home Assistant (`tests/ha/`, CI only) | 160 |
+| **Total** | **341** |
 
-**`config_flow` reached 100% on 2026-08-29**, from 61%. It had been the thinnest area, and the gap
-mattered more than the number suggested: the add-a-matrix flow is the only thing a *new*
-installation touches, and this installation never exercises it — its three entries already existed
-and were adopted. Nothing in daily use would ever have found a break there.
+### What the coverage push actually found
 
-What the new tests cover: the connection form; a matrix that does not answer (`cannot_connect`);
-a full walk through both steps with channels deselected; the model deciding the channel counts;
-the duplicate guard; and the two options-flow paths that only run when something is wrong — an
-entry that is not loaded when caps change, and a device that refuses the write. Both of the latter
-were **silent** until the phase 9 review, and both must keep the user's edit: the Home Assistant
-side clamp still enforces the cap, so failing the save over the hardware belt-and-braces would
-discard the whole edit.
+Chasing the number was worth it for the defects it surfaced, not the number:
 
-Remaining thin areas, named rather than rounded away: `media_player` and `select` at 72-74%, and
-`coordinator` at 83%. These are mostly error branches and entity properties reached only when a
-device misbehaves mid-command.
+| Finding | Why it mattered |
+|---|---|
+| **`send_bursty` swallowed refusals** | It drained every frame without looking at one, so a matrix answering `Command error` was counted, discarded and reported as success — the switch showed the setting it had just failed to make |
+| **`send_bursty` reported success when unreachable** | Zero frames read as "the burst is over". The repair flow told the user it had enabled audio sense on a matrix that was not there |
+| **The simulator's volume taper was wrong** | It interpolated from twenty points; **78 of 101 steps failed a step → dB → step round trip**. Every volume assertion in the suite had been made against a curve the hardware does not have |
+| **Two fault prefixes were missing a length byte** | Those tests passed while exercising nothing — a green assertion that a poll survived a read which never failed |
+| **`freezer` cannot drive a `Debouncer`** | It schedules on the event loop's clock; freezing it hangs rather than fails. Cost fifteen minutes of CI before the job gained a timeout |
+
+### Two branches removed rather than tested
+
+Reaching 100% by contorting a test around unreachable code would make the number a lie. Both of
+these were dead, and the second was only found *because* it was the last line standing:
+
+* **`media_player.async_turn_on`'s "no inputs enabled" guard** — `EntrySettings._active` treats an
+  empty selection as "not chosen yet" and returns every channel, so `self._sources` is never empty.
+  Kept but marked `# pragma: no cover`, because deleting it makes the fallback a silent disconnect
+  if that rule ever changes.
+* **`AmsClient._exchange`'s held-byte prepend** — deleted. `_drain_padding` sets `_held_byte` only
+  on padded firmware, which permanently disables the single-NUL shortcut, which guarantees
+  `_discard_stale` runs first and clears it. The prepend always saw an empty value. The *clearing*
+  is correct — whatever arrived before a question was asked cannot be its answer — so the prepend
+  was the wrong half to keep.
 
 **Superseded, 2026-08-28**
 
