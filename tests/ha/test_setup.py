@@ -132,11 +132,41 @@ class TestUnload:
         await hass.async_block_till_done()
         assert entry.state is ConfigEntryState.NOT_LOADED
 
-    async def test_changing_options_reloads_and_adjusts_the_entities(
+    async def test_deselecting_outputs_leaves_them_unavailable_rather_than_deleting_them(
         self, hass: HomeAssistant, simulator: AmsSimulator
     ) -> None:
+        """Deselected outputs keep their registry entry and go ``unavailable``.
+
+        This is Home Assistant's behaviour for an entity that stops being provided, and for this
+        integration it is the behaviour we want. Removing the registry entries would look tidier,
+        but a later re-select would then mint a fresh entity with a ``_2`` suffix -- the same
+        failure mode the whole drop-in design exists to avoid. Leaving them means deselect and
+        re-select round-trips to the identical entity_id.
+
+        The cost is stale ``unavailable`` entities after a deselect, which is worth stating
+        plainly rather than discovering on a dashboard.
+        """
         entry = await _setup(hass, simulator)
         hass.config_entries.async_update_entry(entry, options={"active_outputs": [1, 2]})
         await hass.async_block_till_done()
+
         players = [s for s in hass.states.async_all() if s.entity_id.startswith("media_player.")]
-        assert len(players) == 2
+        live = [s for s in players if s.state != "unavailable"]
+        assert len(live) == 2, "only the selected outputs should be live"
+        assert len(players) == 8, "the rest stay registered, unavailable"
+
+    async def test_reselecting_an_output_restores_the_same_entity_id(
+        self, hass: HomeAssistant, simulator: AmsSimulator
+    ) -> None:
+        """The reason the above behaviour is correct, asserted rather than assumed."""
+        entry = await _setup(hass, simulator)
+        before = hass.states.get("media_player.test_matrix_output_3").entity_id
+
+        hass.config_entries.async_update_entry(entry, options={"active_outputs": [1, 2]})
+        await hass.async_block_till_done()
+        hass.config_entries.async_update_entry(entry, options={"active_outputs": [1, 2, 3]})
+        await hass.async_block_till_done()
+
+        after = hass.states.get("media_player.test_matrix_output_3")
+        assert after is not None and after.entity_id == before
+        assert after.state != "unavailable"
