@@ -256,6 +256,11 @@ class AmsSimulator:
             self.fail_next = None
             return self._burst_frames()
         if _is_audio_sense_enable_set(payload):
+            # A refusal has to win over the burst, or this double cannot model a device that
+            # rejects the one command whose reply is bursty -- and a client that drains without
+            # looking would swallow that refusal and report success.
+            if self.fail_next in (Fault.COMMAND_ERROR, Fault.EMPTY):
+                return [self._respond(payload)]
             self._dispatch(payload)  # Applies the state change; its single-frame ack is unused.
             return self._burst_frames()
         return [self._respond(payload)]

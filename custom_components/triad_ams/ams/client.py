@@ -229,6 +229,7 @@ class AmsClient:
         needs it, and a flag would put the half-second quiet wait in the hot path of every write.
         """
         drained = 0
+        first: str | None = None
         async with self._lock:
             await self.connect()
             assert self._reader is not None and self._writer is not None
@@ -243,6 +244,8 @@ class AmsClient:
                         )
                     except (TimeoutError, asyncio.IncompleteReadError):
                         break  # Socket went quiet: the burst is over.
+                    if first is None:
+                        first = p.decode_frame(raw)
                     drained += len(raw)
                 else:
                     _LOGGER.warning(
@@ -260,6 +263,14 @@ class AmsClient:
             # Forgetting makes the next ordinary exchange re-learn it rather than trust a reading
             # taken under conditions that do not recur.
             self._forget_framing()
+
+        # The *first* frame only, and only to detect an outright refusal. Draining without ever
+        # looking meant a device that answered "Command error" instead of a burst was swallowed
+        # whole and the caller was told it succeeded -- the switch would report the setting it had
+        # just failed to make. Raised after the drain rather than instead of it, so the socket is
+        # left clean either way; and after the lock, so a raising path cannot hold it.
+        if first is not None and p.is_command_error(first):
+            raise CommandError(first or "empty response")
         _LOGGER.debug("drained %d byte(s) of burst from %s:%s", drained, self.host, self.port)
         return drained
 

@@ -313,3 +313,22 @@ class TestBurstyWrites:
             await client.set_audio_sense_off_delay(30)
             assert await client.get_audio_sense_off_delay() == 30
             await client.disconnect()
+
+    async def test_a_refusal_is_not_swallowed_by_the_drain(self) -> None:
+        """Draining without ever looking meant a refusal was discarded like any other frame.
+
+        The device can answer `Command error` instead of a burst. Before this, `send_bursty` read
+        it, counted its bytes and returned successfully -- so the switch reported the setting it
+        had just failed to make. The first frame is now checked, and only the first: the rest are
+        still discarded unparsed, because a burst carries no ack worth reading.
+        """
+        async with AmsSimulator(inputs=8) as sim:
+            client = await _client(sim)
+            await client.firmware_version()
+            sim.fail_next = Fault.COMMAND_ERROR
+            with pytest.raises(CommandError):
+                await client.set_audio_sense_enabled(enabled=True)
+            # The socket must still be usable: a refusal is an application-layer answer, not a
+            # transport failure.
+            assert await client.get_audio_sense_enabled() in (True, False)
+            await client.disconnect()
