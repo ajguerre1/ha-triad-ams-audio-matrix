@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from datetime import timedelta
 
 from homeassistant.core import HomeAssistant
@@ -34,6 +34,33 @@ SHUTDOWN_TIMEOUT = 5.0
 
 
 @dataclass(frozen=True, slots=True)
+class BandState:
+    """One parametric EQ band."""
+
+    frequency_hz: float
+    gain_db: float
+    q: float
+
+
+@dataclass(frozen=True, slots=True)
+class OutputDsp:
+    """The tone and EQ settings of one output.
+
+    Read only for outputs whose DSP entities are enabled -- twenty round trips per output, and a
+    24-output matrix would otherwise spend 480 of them per cycle populating entities nobody
+    turned on.
+    """
+
+    bass_db: float
+    treble_db: float
+    balance_db: float
+    turn_on_step: int
+    loudness: bool
+    mono: bool
+    bands: tuple[BandState, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class MatrixSnapshot:
     """What one poll learned, for the whole matrix."""
 
@@ -46,6 +73,8 @@ class MatrixSnapshot:
     firmware: str | None = None
     #: Minutes of silence before an analog input sleeps. Device unit is minutes.
     audio_sense_off_delay: int | None = None
+    #: Tone and EQ, only for outputs whose DSP entities are enabled.
+    dsp: dict[int, OutputDsp] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
@@ -92,6 +121,35 @@ class TriadCoordinator(DataUpdateCoordinator[MatrixSnapshot]):
         #: Entities that want input data register here. Disabled entities are never added to Home
         #: Assistant, so they never register, and an untouched platform costs nothing on the wire.
         self._input_consumers = 0
+        #: Per-output DSP consumers, so one zone's EQ does not poll the whole matrix.
+        self._dsp_consumers: dict[int, int] = {}
+
+    def request_output_dsp(self, output: int) -> callable:
+        """Register a need for one output's tone and EQ; returns an unsubscribe.
+
+        Reference-counted **per output**, not globally. Enabling the EQ on one zone should cost
+        one output's worth of reads, not the whole matrix's -- which is the difference between
+        20 extra round trips per cycle and 480 on a 24-output unit.
+        """
+        self._dsp_consumers[output] = self._dsp_consumers.get(output, 0) + 1
+        if self._dsp_consumers[output] == 1:
+            # Entities are added after the first refresh, so without this the first poll skips
+            # this output's DSP and nothing asks again until the next interval.
+            self.hass.async_create_task(self.async_request_refresh())
+
+        def _release() -> None:
+            remaining = self._dsp_consumers.get(output, 0) - 1
+            if remaining > 0:
+                self._dsp_consumers[output] = remaining
+            else:
+                self._dsp_consumers.pop(output, None)
+
+        return _release
+
+    @property
+    def dsp_outputs(self) -> list[int]:
+        """Outputs with at least one enabled DSP entity."""
+        return sorted(self._dsp_consumers)
 
     def request_input_polling(self) -> callable:
         """Register a need for per-input data; returns an unsubscribe.
@@ -152,7 +210,45 @@ class TriadCoordinator(DataUpdateCoordinator[MatrixSnapshot]):
             audio_sense_enabled=enabled,
             firmware=firmware,
             audio_sense_off_delay=delay,
+            dsp=await self._read_dsp(),
         )
+
+    async def _read_dsp(self) -> dict[int, OutputDsp]:
+        """Read tone and EQ for the outputs that have a consumer, and only those."""
+        readings: dict[int, OutputDsp] = {}
+        previous = self.data.dsp if self.data else {}
+        for output in self.dsp_outputs:
+            try:
+                readings[output] = await self._read_output_dsp(output)
+            except (CommandError, ParseError) as err:
+                _LOGGER.debug("output %s DSP did not answer cleanly: %s", output, err)
+                if (stale := previous.get(output)) is not None:
+                    readings[output] = stale
+        return readings
+
+    async def _read_output_dsp(self, output: int) -> OutputDsp:
+        bands = [BandState(*(await self.client.get_eq_band(output, band))) for band in range(1, 6)]
+        return OutputDsp(
+            bass_db=await self.client.get_bass(output),
+            treble_db=await self.client.get_treble(output),
+            balance_db=await self.client.get_balance(output),
+            turn_on_step=await self.client.get_turn_on_volume_step(output),
+            loudness=await self.client.get_loudness(output),
+            mono=await self.client.get_mono(output),
+            bands=tuple(bands),
+        )
+
+    async def async_refresh_output_dsp(self, output: int) -> None:
+        """Re-read one output's DSP after a write, without disturbing anything else."""
+        try:
+            dsp = await self._read_output_dsp(output)
+        except (CommandError, ParseError, TransportError) as err:
+            _LOGGER.debug("could not re-read output %s DSP: %s", output, err)
+            return
+        current = self.data
+        if current is None:
+            return
+        self.async_set_updated_data(replace(current, dsp={**current.dsp, output: dsp}))
 
     async def _read_static(self) -> tuple[str | None, int | None]:
         """Read values that do not change while the session lasts, once.
@@ -213,15 +309,7 @@ class TriadCoordinator(DataUpdateCoordinator[MatrixSnapshot]):
             _LOGGER.debug("could not re-read output %s after a command: %s", output, err)
             return
         current = self.data or MatrixSnapshot(outputs={}, audio_sense={})
-        self.async_set_updated_data(
-            MatrixSnapshot(
-                outputs={**current.outputs, output: snapshot},
-                audio_sense=current.audio_sense,
-                audio_sense_enabled=current.audio_sense_enabled,
-                firmware=current.firmware,
-                audio_sense_off_delay=current.audio_sense_off_delay,
-            )
-        )
+        self.async_set_updated_data(replace(current, outputs={**current.outputs, output: snapshot}))
 
     async def async_shutdown(self) -> None:
         """Close the socket, but never let shutdown hang or raise.

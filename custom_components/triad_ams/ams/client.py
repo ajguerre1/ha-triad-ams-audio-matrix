@@ -25,6 +25,7 @@ import logging
 from typing import Final
 
 from . import protocol as p
+from .eq import index_for_frequency
 from .errors import CommandError, ParseError, TransportError
 from .model import MODELS, MatrixSpec
 from .volume import step_for_db
@@ -260,6 +261,46 @@ class AmsClient:
         """Whether this matrix measures audio sense at all."""
         return p.parse_audio_sense_enabled(await self._exchange(p.query_audio_sense_enabled()))
 
+    async def get_balance(self, output: int) -> float:
+        text = await self._exchange(p.query_output_balance(self.spec, output))
+        index, value = p.parse_output_balance(text)
+        self._verify(index, output, "balance")
+        return value
+
+    async def get_turn_on_volume_step(self, output: int) -> int:
+        text = await self._exchange(p.query_output_turn_on_volume(self.spec, output))
+        index, db = p.parse_output_turn_on_volume(text)
+        self._verify(index, output, "turn-on volume")
+        return step_for_db(db)
+
+    async def get_eq_band(self, output: int, band: int) -> tuple[float, float, float]:
+        """Return ``(frequency_hz, gain_db, q)`` for one band.
+
+        Three round trips; the device offers no way to ask for a whole band at once.
+        """
+        out, got, hz = p.parse_eq_frequency(
+            await self._exchange(p.query_eq_frequency(self.spec, output, band))
+        )
+        self._verify(out, output, f"EQ band {band} frequency")
+        self._verify_band(got, band)
+
+        out, got, gain = p.parse_eq_gain(
+            await self._exchange(p.query_eq_gain(self.spec, output, band))
+        )
+        self._verify(out, output, f"EQ band {band} gain")
+        self._verify_band(got, band)
+
+        out, got, q = p.parse_eq_q(await self._exchange(p.query_eq_q(self.spec, output, band)))
+        self._verify(out, output, f"EQ band {band} Q")
+        self._verify_band(got, band)
+        return hz, gain, q
+
+    def _verify_band(self, reported: int, asked: int) -> None:
+        """Bands carry their own index, so a slip within one output is catchable too."""
+        if reported != asked:
+            msg = f"asked EQ band {asked}, device answered for band {reported}"
+            raise ParseError(msg)
+
     async def get_audio_sense_off_delay(self) -> int:
         """Minutes of silence before an analog input sleeps."""
         return p.parse_audio_sense_off_delay(await self._exchange(p.query_audio_sense_off_delay()))
@@ -307,3 +348,23 @@ class AmsClient:
 
     async def set_mono(self, output: int, *, mono: bool) -> None:
         await self._write(p.set_output_mono(self.spec, output, mono=mono))
+
+    async def set_balance(self, output: int, db: float) -> None:
+        await self._write(p.set_output_balance(self.spec, output, db))
+
+    async def set_max_volume_step(self, output: int, step: int) -> None:
+        await self._write(p.set_output_max_volume(self.spec, output, step))
+
+    async def set_turn_on_volume_step(self, output: int, step: int) -> None:
+        await self._write(p.set_output_turn_on_volume(self.spec, output, step))
+
+    async def set_eq_frequency(self, output: int, band: int, hz: float) -> None:
+        """Set a band's centre frequency, given in Hz.
+
+        Converted to the device's table index here, so no caller ever handles the raw index. It
+        is an artefact of the wire format and would be meaningless in a UI to anyone tuning a room.
+        """
+        await self._write(p.set_eq_frequency(self.spec, output, band, index_for_frequency(hz)))
+
+    async def set_eq_gain(self, output: int, band: int, db: float) -> None:
+        await self._write(p.set_eq_gain(self.spec, output, band, db))

@@ -20,6 +20,7 @@ from __future__ import annotations
 import re
 from typing import Final
 
+from .eq import parse_frequency_text
 from .errors import CommandError, ParseError
 from .model import MatrixSpec
 from .volume import MAX_STEP, MIN_STEP
@@ -456,8 +457,18 @@ def _parse_band(text: str, label: str, what: str) -> tuple[int, int, float]:
 
 
 def parse_eq_frequency(text: str) -> tuple[int, int, float]:
-    """``Get Out[1] Band 1 Freq : 63 Hz`` -> ``(1, 1, 63.0)``; the unit is dropped."""
-    return _parse_band(text, "Freq", "EQ frequency")
+    """``Get Out[1] Band 3 Freq : 1.6 kHz`` -> ``(1, 3, 1600.0)``. Always in Hz.
+
+    The unit is honoured, not stripped. Dropping it turns 1.6 kHz into 1.6 Hz -- three orders of
+    magnitude out, plausible-looking, and the common case rather than an edge one, since every
+    band above 1 kHz reports with a multiplier.
+    """
+    m = _match(rf"{_OUT_INDEX}\s+Band\s+(\d+)\s+Freq\s*:\s*(.+)", text, "EQ frequency")
+    try:
+        hz = parse_frequency_text(m.group(3))
+    except ValueError as err:
+        raise _fail(text, "EQ frequency") from err
+    return int(m.group(1)), int(m.group(2)), hz
 
 
 def parse_eq_gain(text: str) -> tuple[int, int, float]:

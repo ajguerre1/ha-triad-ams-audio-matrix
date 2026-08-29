@@ -58,6 +58,18 @@ class Fault(Enum):
     BURST = "burst"
 
 
+#: Factory band defaults, read from real hardware: 63 Hz, 250 Hz, 1 kHz, 4 kHz, 20 kHz.
+DEFAULT_BAND_INDICES = (5, 11, 17, 23, 30)
+
+#: ISO 1/3-octave centres, duplicated deliberately -- a test double that imports the table it is
+#: checking can agree with a bug in it.
+_FREQ_HZ = (
+    20, 25, 31.5, 40, 50, 63, 80, 100, 125, 160,
+    200, 250, 315, 400, 500, 630, 800, 1000, 1250, 1600,
+    2000, 2500, 3150, 4000, 5000, 6300, 8000, 10000, 12500, 16000, 20000,
+)  # fmt: skip
+
+
 @dataclass
 class OutputState:
     source: int | None = None
@@ -65,8 +77,13 @@ class OutputState:
     muted: bool = False
     bass: float = 0.0
     treble: float = 0.0
+    balance: float = 0.0
     loudness: bool = False
     mono: bool = False
+    turn_on_step: int = 0
+    band_freq: list[int] = field(default_factory=lambda: list(DEFAULT_BAND_INDICES))
+    band_gain: list[float] = field(default_factory=lambda: [0.0] * 5)
+    band_q: list[float] = field(default_factory=lambda: [0.7] * 5)
 
 
 @dataclass
@@ -302,6 +319,24 @@ class AmsSimulator:
             channel.treble = rest[1] / 2 - 12
             return f"Set Out[{output}] Treble"
 
+        if opcode == 0x31:
+            if query:
+                if channel.balance == 0:
+                    return f"Get Out[{output}] Balance : Bal Center"
+                side = "L" if channel.balance < 0 else "R"
+                return f"Get Out[{output}] Balance : Bal {side}{abs(channel.balance):g}"
+            channel.balance = rest[1] / 2 - 12
+            return f"Set Out[{output}] Balance"
+
+        if opcode == 0x33:
+            if query:
+                return f"Get Out[{output}] Turn on Vol : {_db_for(channel.turn_on_step)}"
+            channel.turn_on_step = rest[1]
+            return f"Set Out[{output}] Turn on Vol"
+
+        if 0x20 <= opcode <= 0x2E:
+            return self._eq(channel, output, opcode, rest, query=query)
+
         if opcode in (0x1A, 0x1B):
             if query:
                 return f"Get Out[{output}] Loudness status : {'On' if channel.loudness else 'Off'}"
@@ -316,6 +351,32 @@ class AmsSimulator:
             return f"Set Out[{output}] Stereo Mono"
 
         return "Command error"
+
+    def _eq(self, channel, output: int, opcode: int, rest: bytes, *, query: bool) -> str:
+        """EQ opcodes are a base plus the 0-based band index; three parameters share the range."""
+        if opcode <= 0x24:
+            band, kind = opcode - 0x20, "Freq"
+        elif opcode <= 0x29:
+            band, kind = opcode - 0x25, "Gain"
+        else:
+            band, kind = opcode - 0x2A, "Q"
+
+        if kind == "Freq":
+            if query:
+                hz = _FREQ_HZ[channel.band_freq[band]]
+                text = f"{hz / 1000:g} kHz" if hz >= 1000 else f"{hz:g} Hz"
+                return f"Get Out[{output}] Band {band + 1} Freq : {text}"
+            channel.band_freq[band] = rest[1]
+            return f"Set Out[{output}] Band {band + 1} Freq"
+        if kind == "Gain":
+            if query:
+                return f"Get Out[{output}] Band {band + 1} Gain : {channel.band_gain[band]:g}"
+            channel.band_gain[band] = rest[1] / 2 - 12
+            return f"Set Out[{output}] Band {band + 1} Gain"
+        if query:
+            return f"Get Out[{output}] Band {band + 1} Q : {channel.band_q[band]:g}"
+        channel.band_q[band] = rest[1]
+        return f"Set Out[{output}] Band {band + 1} Q"
 
     def _output(self, wire_index: int) -> int:
         """Wire indices are 0-based; everything else in this file is 1-based."""

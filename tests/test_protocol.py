@@ -125,6 +125,19 @@ class TestResponseParsing:
         assert p.parse_eq_gain("Get Out[1] Band 1 Gain : 0") == (1, 1, 0.0)
         assert p.parse_eq_q("Get Out[1] Band 1 Q : 0.7") == (1, 1, 0.7)
 
+    def test_eq_frequencies_above_a_kilohertz_carry_their_multiplier(self) -> None:
+        """All captured 2026-08-29. The kHz suffix is not decoration.
+
+        A regex that grabs the number and ignores the unit turns 1.6 kHz into 1.6 Hz -- three
+        orders of magnitude out, and entirely plausible-looking in a UI. Every band above 1 kHz
+        reports this way, so it is the common case, not an edge one.
+        """
+        assert p.parse_eq_frequency("Get Out[1] Band 3 Freq : 1 kHz") == (1, 3, 1000.0)
+        assert p.parse_eq_frequency("Get Out[2] Band 3 Freq : 1.6 kHz") == (2, 3, 1600.0)
+        assert p.parse_eq_frequency("Get Out[2] Band 4 Freq : 2.5 kHz") == (2, 4, 2500.0)
+        assert p.parse_eq_frequency("Get Out[1] Band 5 Freq : 20 kHz") == (1, 5, 20000.0)
+        assert p.parse_eq_frequency("Get Out[1] Band 2 Freq : 250 Hz") == (1, 2, 250.0)
+
     def test_input_gain_parses_from_the_in_prefix(self) -> None:
         assert p.parse_input_gain("Get In[1] input gain : 0") == (1, 0)
 

@@ -16,7 +16,7 @@ from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import CONF_HOST, CONF_MODEL, DOMAIN, UNIQUE_ID_OUTPUT
-from .coordinator import OutputSnapshot, TriadCoordinator
+from .coordinator import BandState, OutputDsp, OutputSnapshot, TriadCoordinator
 
 
 class TriadEntity(CoordinatorEntity[TriadCoordinator]):
@@ -59,6 +59,55 @@ class TriadOutputEntity(TriadEntity):
         reading should say so rather than report a default.
         """
         return super().available and self.snapshot is not None
+
+
+class TriadOutputDspEntity(TriadOutputEntity):
+    """Base for entities that need one output's tone and EQ.
+
+    Registering here is what makes per-output DSP polling possible: the coordinator only reads an
+    output's twenty DSP values when at least one of these exists and is enabled. Disabled entities
+    are never added to Home Assistant, so a matrix whose EQ nobody touched costs nothing extra on
+    the wire.
+
+    The ``unique_id`` is namespaced ``_output_{n}_{key}`` -- it extends the frozen output format
+    rather than colliding with it, so a DSP entity can never shadow the media_player that owns the
+    same output number.
+    """
+
+    def __init__(
+        self,
+        coordinator: TriadCoordinator,
+        entry: ConfigEntry,
+        output: int,
+        key: str,
+    ) -> None:
+        super().__init__(coordinator, entry, output)
+        self._attr_unique_id = f"{entry.entry_id}_output_{output}_{key}"
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        self.async_on_remove(self.coordinator.request_output_dsp(self._output))
+
+    @property
+    def dsp(self) -> OutputDsp | None:
+        data = self.coordinator.data
+        return data.dsp.get(self._output) if data else None
+
+    def band(self, band: int) -> BandState | None:
+        """One EQ band, 1-based, or None if this output's DSP has not been read yet."""
+        dsp = self.dsp
+        if dsp is None or not 1 <= band <= len(dsp.bands):
+            return None
+        return dsp.bands[band - 1]
+
+    @property
+    def available(self) -> bool:
+        """Unavailable until this output's DSP has actually been read.
+
+        The first poll after enabling happens moments later, and reporting a default in the gap
+        would show a flat EQ on a zone that may be heavily shaped.
+        """
+        return super().available and self.dsp is not None
 
 
 class TriadInputEntity(TriadEntity):
