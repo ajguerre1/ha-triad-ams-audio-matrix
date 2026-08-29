@@ -134,8 +134,6 @@ class AmsClient:
                 raw = await asyncio.wait_for(
                     self._reader.readuntil(p.FRAME_TERMINATOR), timeout=READ_TIMEOUT
                 )
-                if self._held_byte:
-                    raw, self._held_byte = self._held_byte + raw, b""
                 await self._drain_padding()
             except (OSError, TimeoutError, asyncio.IncompleteReadError) as err:
                 self._reset()
@@ -146,8 +144,15 @@ class AmsClient:
     async def _drain_padding(self) -> None:
         """Swallow NUL padding that trails a frame on some firmware.
 
-        A non-NUL byte means the padding has ended and real data has started; it is held back and
-        prepended to the next frame, so over-reading cannot lose anything.
+        A non-NUL byte means the padding has ended and real data has started, so it is held back
+        rather than consumed -- the drain must not eat a byte it did not put there.
+
+        **The held byte is then discarded, not reused**, and that is deliberate. It is only ever
+        set on padded firmware, which permanently disables the single-NUL shortcut, which
+        guarantees :meth:`_discard_stale` runs before the next command and folds it into the
+        pre-command discard. That is correct: whatever arrived before a question was asked cannot
+        be its answer. An earlier version tried to prepend it to the next frame, which could never
+        run for exactly this reason.
         """
         if self._trusts_single_nul():
             return
