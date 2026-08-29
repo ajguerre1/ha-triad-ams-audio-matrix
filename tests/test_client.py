@@ -7,10 +7,11 @@ which blocks sockets for the whole session in CI.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 
 import pytest
 from ams.client import AmsClient
-from ams.errors import CommandError, ParseError, TransportError
+from ams.errors import CommandError, ParseError, TransportError, TriadError
 from ams.model import MatrixSpec
 
 from tests.simulator import AmsSimulator, Fault, Padding
@@ -125,6 +126,34 @@ class TestFaults:
             sim.fail_next = Fault.WRONG_OUTPUT
             with pytest.raises(ParseError):
                 await client.get_route(1)
+            await client.disconnect()
+
+    async def test_a_burst_response_does_not_desync_later_commands(self) -> None:
+        """C-09, and the only finding here that came from breaking a real matrix.
+
+        Enabling audio sense is answered by roughly one frame per input, not one frame. While
+        measuring that on live hardware, the probe read the surplus as answers to its later
+        queries and stayed wrong for ~19 exchanges -- asking about input 7 and being told about
+        inputs 1, 5, 8, 11 and 14 in turn. Every frame parsed cleanly; only the index gave it away.
+
+        The client must either resynchronise or refuse, never quietly return another zone's state.
+        """
+        async with AmsSimulator(outputs=8, inputs=8) as sim:
+            for output in range(1, 9):
+                sim.mutate(output, source=output)
+            client = await _client(sim)
+            await client.firmware_version()
+
+            sim.fail_next = Fault.BURST
+            with contextlib.suppress(TriadError):
+                await client.get_route(1)  # Swallowed by the burst, however it fails.
+
+            # The next several commands must be answered correctly, or the surplus frames are
+            # still being read as responses.
+            for output in range(1, 9):
+                assert await client.get_route(output) == output, (
+                    f"still desynchronised at output {output}"
+                )
             await client.disconnect()
 
     async def test_a_refused_connection_raises_a_transport_error(self) -> None:

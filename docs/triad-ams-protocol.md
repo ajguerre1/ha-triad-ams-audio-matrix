@@ -167,10 +167,49 @@ Responses report **human units**, not the raw index: `Get Out[1] Band 1 Freq : 6
 
 Input gain is sent doubled (`value * 2`) per the Control4 driver.
 
-Audio sense is the **only unsolicited message** this hardware emits. It arrives as
-`AudioSense:Input[0]: 1` (0-based index) without being asked for. The Control4 driver treats the
-value as boolean, but `2` was observed on live hardware and is undocumented — see
-[Open questions](#open-questions).
+#### Audio sense values — measured 2026-08-29
+
+| Value | Meaning |
+|---|---|
+| `2` | **Audio sense is disabled on this matrix.** Not a signal state |
+| `1` | Signal present |
+| `0` | No signal |
+
+`2` is the value the Control4 driver never documents, because it only ever tests for `1`. With
+the feature disabled — which is how all three matrices in the reference installation ship — every
+input answers `2` whether or not audio is flowing. Confirmed against an input carrying live music:
+it read `2`, stable over eight samples, identical to a dead input.
+
+With sense enabled, the same input read `1` while an idle one read `0`.
+
+#### Enabling audio sense returns a burst, not one frame
+
+```
+FF 55 04 0A A2 01 FF     enable   -> Set AutoSenseEnable : Enable
+FF 55 04 0A A2 00 FF     disable
+FF 55 04 0A A2 F5 00     query    -> Get AutoSenseEnable : Disable
+```
+
+**The enable command is answered by roughly one `AudioSense:Input[n]` frame per input**, not by a
+single response. On a 24-input matrix that is ~24 frames arriving where a client expects one.
+
+This is a real hazard, and it was hit while measuring: a probe that assumes one frame per command
+read those frames as answers to its *subsequent* queries and stayed desynchronised for ~19
+exchanges — asking about input 7 and being told about inputs 1, 5, 8, 11 and 14 in turn — before
+catching up. Every frame parsed cleanly. Only the index in each response revealed the slip.
+
+A client that sends this command must drain to a quiet socket afterwards, or verify the index in
+every response, or both.
+
+#### It is a burst, not a broadcast
+
+A second socket, connected throughout and issuing nothing, received **zero** frames during 40 s
+with sense enabled and music playing. The burst goes to the socket that sent the command.
+
+**Still unmeasured:** whether a *transition* — audio starting or stopping while sense is enabled —
+pushes an unsolicited frame. Music played continuously throughout the window, so no transition
+occurred. The Control4 driver's receive handler is written as though it does, which is suggestive
+but not evidence.
 
 ### Output groups
 
@@ -255,10 +294,10 @@ disagree, **the diagnostics list is correct** — it is the path that was actual
 
 ## Open questions
 
-1. **Does an idle socket receive unsolicited audio-sense events?** The Control4 driver's receive
-   handler is written as though it does, but this was not confirmed during capture because no
-   source was playing. Decides whether audio sense is push or polled.
-2. **What does `AudioSense:Input[0]: 2` mean?** The driver tests only for `: 1` and treats anything
-   else as "stopped". Value `2` was observed on live hardware with nothing playing. Until this is
-   resolved, this integration maps `1` to detected, and anything else to not-detected, which
-   matches the driver's behaviour.
+1. **Does a signal transition push an unsolicited frame?** Enabling audio sense produces a burst on
+   the commanding socket, and a passive socket saw nothing across 40 s of steady music — but no
+   audio started or stopped in that window, so a transition has never been observed. Answering it
+   needs sense enabled *and* someone starting or stopping playback.
+
+*Resolved 2026-08-29 and documented above: what `AudioSense: 2` means, and that the enable command
+is answered by a burst rather than a single frame.*

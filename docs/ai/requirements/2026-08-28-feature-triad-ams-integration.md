@@ -122,6 +122,7 @@ interface, outside Home Assistant entirely, and are therefore invisible to autom
 | C-06 | The device client must not import Home Assistant | Development is on Windows, where Home Assistant cannot be imported |
 | C-07 | Entity `unique_id` must remain `{entry_id}_output_{n}` | Changing it orphans every existing entity and recreates it with a `_2` suffix |
 | C-08 | **The control port is unauthenticated.** Anything on the LAN can route and set volume on port 52000 | Protocol has no auth of any kind. Security rests entirely on network segmentation, which is an existing property of this installation, not something this integration can improve. Stated so it is a known accepted risk rather than an unexamined one |
+| C-09 | **Some commands are answered by a burst of frames, not one.** Enabling audio sense returns ~one frame per input | **Measured 2026-08-29.** A client assuming one response per command desyncs for as many exchanges as the burst is long, and every frame parses cleanly, so nothing raises. Any such command must be followed by a drain, and response indices must be verified |
 
 **Rollout constraint**
 
@@ -132,16 +133,30 @@ interface, outside Home Assistant entirely, and are therefore invisible to autom
 
 **Named assumptions**
 
-| ID | Assumption | Risk if wrong | Revisit |
-|---|---|---|---|
-| A-01 | Audio sense is **polled**, not pushed — an idle socket receives no unsolicited events | Audio-sense entities update only per poll instead of instantly; no data is wrong, only late | At the audio-sense task, with a zone playing |
-| A-02 | In `AudioSense:Input[n]: v`, only `v == 1` means detected | An undocumented state reads as "not detected" | Same |
-| A-03 | The two AMS24s' DHCP assignment resembles the AMS8's | An unreserved lease could move and break a config entry | If a matrix becomes unreachable after a reboot |
+| ID | Assumption | Status |
+|---|---|---|
+| A-01 | Audio sense is **polled**, not pushed | **Mostly confirmed 2026-08-29.** A passive socket received nothing across 40 s with sense enabled and music playing. Polling is correct. One case remains unobserved — a signal *transition* — because audio never started or stopped during the window |
+| A-02 | In `AudioSense:Input[n]: v`, only `v == 1` means detected | **Confirmed, and the reason is now known.** `1` = signal, `0` = none, `2` = **audio sense is disabled**. The code was already right; it was right for a reason nobody had established |
+| A-03 | The two AMS24s' DHCP assignment resembles the AMS8's | Open. Low impact — neither has moved |
 
-A-01 and A-02 are **accepted deliberately**, not overlooked: both need the hardware with music
-playing, neither blocks the rest of the work, and both are pinned by tests so that changing the
-behaviour later is a deliberate edit rather than an accident. They match what the Control4 driver
-itself does.
+### What the 2026-08-29 capture changed
+
+Both audio-sense assumptions were checked against live hardware with music playing through the
+Office chain (`wiim → dsp-06 → Matrix 02 input 7 → output 7`). Audio sense was enabled on that
+matrix for 40 s and restored, verified on two independent fresh connections.
+
+**Audio sense is switched off on all three matrices**, and `2` is what that looks like. An input
+carrying music reads `2`, identically to a dead one. This is the finding that matters for FR-06:
+as the installation currently stands, a `binary_sensor` per input would report "not detected" for
+all 56 inputs, permanently. The entity could never be true.
+
+**A new constraint fell out of it (C-09).** Enabling audio sense is answered by roughly one frame
+*per input* — ~24 on an AMS24 — not by a single response. The measuring probe read those as
+answers to later queries and stayed desynchronised for ~19 exchanges. Every frame parsed cleanly;
+only the index revealed the slip. Any command that can return a burst must be followed by a drain,
+and every response's index must be checked. The client already does the latter — this is the first
+evidence that the guard earns its place against real hardware rather than only against the
+simulator.
 
 **C-02's stakes were overstated, and the correction is worth recording**
 

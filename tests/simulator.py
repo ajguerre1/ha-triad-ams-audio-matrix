@@ -28,6 +28,14 @@ FIXED_FRAME = 150
 
 SIMULATOR_MAC = "AA:BB:CC:DD:EE:FF"
 
+#: Command groups that change device state, and the marker that makes a command a query instead.
+#: Named rather than inlined as byte literals: an earlier inline version was silently mangled to
+#: empty bytes, which made ``write_commands`` return nothing and let the D-05 test pass without
+#: checking anything.
+OUTPUT_GROUP = b"\x03"
+INPUT_GROUP = b"\x02"
+QUERY_MARKER = 0xF5
+
 
 class Padding(Enum):
     """How this firmware personality terminates a frame."""
@@ -44,6 +52,10 @@ class Fault(Enum):
     #: Answer correctly but name a different output. This is what a desynchronised stream looks
     #: like from the client's side: a well-formed, parseable response about the wrong zone.
     WRONG_OUTPUT = "wrong_output"
+    #: Answer with a BURST of frames instead of one. Measured on real hardware: enabling audio
+    #: sense returns roughly one AudioSense frame per input. A client assuming one response per
+    #: command reads the surplus as answers to later queries and desyncs silently.
+    BURST = "burst"
 
 
 @dataclass
@@ -135,7 +147,7 @@ class AmsSimulator:
         writes = []
         for frame in self.received:
             payload = bytes.fromhex(frame)[3:]
-            if payload[:1] in (b"", b"") and 0xF5 not in payload:
+            if payload[:1] in (OUTPUT_GROUP, INPUT_GROUP) and QUERY_MARKER not in payload:
                 writes.append(frame)
         return writes
 
@@ -178,7 +190,8 @@ class AmsSimulator:
                     continue
                 payload = await reader.readexactly(header[2])
                 self.received.append((header + payload).hex())
-                writer.write(self._frame(self._respond(payload)))
+                for text in self._respond_frames(payload):
+                    writer.write(self._frame(text))
                 await writer.drain()
         except (asyncio.IncompleteReadError, ConnectionResetError, BrokenPipeError):
             pass
@@ -186,6 +199,14 @@ class AmsSimulator:
             self.connections -= 1
             self._writers.discard(writer)
             writer.close()
+
+    def _respond_frames(self, payload: bytes) -> list[str]:
+        """Frames to send for one command. Usually one; a burst fault sends many."""
+        if self.fail_next is Fault.BURST:
+            self.fail_next = None
+            # One frame per input, as the real enable command produces.
+            return [f"AudioSense:Input[{i}]: 0" for i in range(self.state.inputs)]
+        return [self._respond(payload)]
 
     def _respond(self, payload: bytes) -> str:
         fault, self.fail_next = self.fail_next, None
