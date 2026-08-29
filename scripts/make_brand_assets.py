@@ -96,9 +96,7 @@ def draw_mark(draw: ImageDraw.ImageDraw, apex, left, right) -> None:
             outer_bottom = _lerp(inner_top, corner, bottom_t)
             inner_top_pt = _lerp(inner_top, inner_bottom, top_t)
             inner_bottom_pt = _lerp(inner_top, inner_bottom, bottom_t)
-            draw.polygon(
-                [outer_top, inner_top_pt, inner_bottom_pt, outer_bottom], fill=FOREGROUND
-            )
+            draw.polygon([outer_top, inner_top_pt, inner_bottom_pt, outer_bottom], fill=FOREGROUND)
 
 
 def render_icon(size: int) -> Image.Image:
