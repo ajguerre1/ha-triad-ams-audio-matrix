@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 
 import pytest
 from homeassistant.components.diagnostics import REDACTED
@@ -73,22 +74,38 @@ class TestInputGain:
 
 
 class TestDiagnosticsRedaction:
-    async def test_the_host_never_appears_anywhere_in_the_download(
+    async def test_no_network_address_appears_anywhere_in_the_download(
         self, hass: HomeAssistant, simulator: AmsSimulator
     ) -> None:
         """The reason this file exists.
 
         A diagnostics download gets pasted into public issue trackers. Searching the serialised
-        blob rather than checking a key is deliberate: the address could reach the output through
-        the entry data, the unique_id, or something added later, and only a full-text check
-        catches the route nobody thought of.
+        blob with a general address pattern -- rather than checking a key, or grepping for the one
+        address this test happens to use -- is deliberate: the host could reach the output through
+        the entry data, the unique_id, or a field added later, and only a full-text check catches
+        the route nobody thought of.
         """
         entry = await _setup(hass, simulator)
         blob = json.dumps(await async_get_config_entry_diagnostics(hass, entry))
 
-        assert "127.0.0.1" not in blob
-        assert str(simulator.port) not in blob.replace(f'"{simulator.port}"', "")
-        assert REDACTED in blob
+        addresses = re.findall(r"\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b", blob)
+        assert not addresses, f"an address reached the diagnostics: {addresses}"
+        assert REDACTED in blob, "nothing was redacted at all"
+
+    async def test_the_port_is_deliberately_not_redacted(
+        self, hass: HomeAssistant, simulator: AmsSimulator
+    ) -> None:
+        """A deliberate exception, asserted so it stays deliberate.
+
+        The port is 52000 on every installation -- it is the documented default and appears
+        throughout the public protocol reference, so redacting it protects nothing. A *non*-default
+        port, on the other hand, is exactly the sort of thing worth knowing when a connection
+        fails, so hiding it would cost real debugging signal for no privacy gain.
+        """
+        entry = await _setup(hass, simulator)
+        diag = await async_get_config_entry_diagnostics(hass, entry)
+        assert diag["entry"]["data"]["port"] == simulator.port
+        assert diag["entry"]["data"]["host"] == REDACTED
 
     async def test_it_still_carries_what_explains_behaviour(
         self, hass: HomeAssistant, simulator: AmsSimulator
