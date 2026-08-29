@@ -301,6 +301,27 @@ class AmsClient:
             msg = f"asked EQ band {asked}, device answered for band {reported}"
             raise ParseError(msg)
 
+    async def get_trigger_bank(self, bank: int) -> bool:
+        """Whether one 12 V output trigger bank is on."""
+        text = await self._exchange(p.query_trigger_bank(self.spec, bank))
+        _name, on = p.parse_trigger(text)
+        return on
+
+    async def get_trigger_asg(self) -> bool:
+        """Whether the ASG trigger is on.
+
+        Its wire index depends on the model -- an 8x8 puts ASG where a 24x24 keeps its 9-16 bank
+        -- which is why this goes through the spec rather than a literal.
+        """
+        _name, on = p.parse_trigger(await self._exchange(p.query_trigger_asg(self.spec)))
+        return on
+
+    async def set_trigger_bank(self, bank: int, *, on: bool) -> None:
+        await self._write(p.set_trigger_bank(self.spec, bank, on=on))
+
+    async def set_trigger_asg(self, *, on: bool) -> None:
+        await self._write(p.set_trigger_asg(self.spec, on=on))
+
     async def get_audio_sense_off_delay(self) -> int:
         """Minutes of silence before an analog input sleeps."""
         return p.parse_audio_sense_off_delay(await self._exchange(p.query_audio_sense_off_delay()))

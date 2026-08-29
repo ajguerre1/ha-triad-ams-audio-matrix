@@ -75,6 +75,8 @@ class MatrixSnapshot:
     audio_sense_off_delay: int | None = None
     #: Tone and EQ, only for outputs whose DSP entities are enabled.
     dsp: dict[int, OutputDsp] = field(default_factory=dict)
+    #: 12 V trigger banks by 1-based bank number, plus ``asg``. Only read when consumed.
+    triggers: dict[str, bool] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
@@ -123,6 +125,7 @@ class TriadCoordinator(DataUpdateCoordinator[MatrixSnapshot]):
         self._input_consumers = 0
         #: Per-output DSP consumers, so one zone's EQ does not poll the whole matrix.
         self._dsp_consumers: dict[int, int] = {}
+        self._trigger_consumers = 0
 
     def request_output_dsp(self, output: int) -> callable:
         """Register a need for one output's tone and EQ; returns an unsubscribe.
@@ -150,6 +153,25 @@ class TriadCoordinator(DataUpdateCoordinator[MatrixSnapshot]):
     def dsp_outputs(self) -> list[int]:
         """Outputs with at least one enabled DSP entity."""
         return sorted(self._dsp_consumers)
+
+    def request_trigger_polling(self) -> callable:
+        """Register a need for trigger state; returns an unsubscribe.
+
+        Only a handful of reads, but the same rule applies: an integration whose trigger switches
+        are all disabled should put nothing extra on the wire.
+        """
+        self._trigger_consumers += 1
+        if self._trigger_consumers == 1:
+            self.hass.async_create_task(self.async_request_refresh())
+
+        def _release() -> None:
+            self._trigger_consumers = max(0, self._trigger_consumers - 1)
+
+        return _release
+
+    @property
+    def polls_triggers(self) -> bool:
+        return self._trigger_consumers > 0
 
     def request_input_polling(self) -> callable:
         """Register a need for per-input data; returns an unsubscribe.
@@ -211,7 +233,37 @@ class TriadCoordinator(DataUpdateCoordinator[MatrixSnapshot]):
             firmware=firmware,
             audio_sense_off_delay=delay,
             dsp=await self._read_dsp(),
+            triggers=await self._read_triggers(),
         )
+
+    async def _read_triggers(self) -> dict[str, bool]:
+        """Read the trigger banks this model has, and only when something consumes them."""
+        if not self.polls_triggers:
+            return self.data.triggers if self.data else {}
+        readings: dict[str, bool] = {}
+        spec = self.client.spec
+        for bank in range(1, spec.trigger_banks + 1):
+            try:
+                readings[str(bank)] = await self.client.get_trigger_bank(bank)
+            except (CommandError, ParseError) as err:
+                _LOGGER.debug("trigger bank %s did not answer cleanly: %s", bank, err)
+        try:
+            readings["asg"] = await self.client.get_trigger_asg()
+        except (CommandError, ParseError) as err:
+            _LOGGER.debug("ASG trigger did not answer cleanly: %s", err)
+        return readings
+
+    async def async_refresh_triggers(self) -> None:
+        """Re-read trigger state after a write."""
+        current = self.data
+        if current is None:
+            return
+        try:
+            triggers = await self._read_triggers()
+        except TransportError as err:
+            _LOGGER.debug("could not re-read triggers: %s", err)
+            return
+        self.async_set_updated_data(replace(current, triggers=triggers))
 
     async def _read_dsp(self) -> dict[int, OutputDsp]:
         """Read tone and EQ for the outputs that have a consumer, and only those."""

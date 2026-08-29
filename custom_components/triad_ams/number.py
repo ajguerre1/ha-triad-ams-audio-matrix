@@ -2,10 +2,11 @@
 
 All disabled by default. A 24-output matrix would otherwise add 240 sliders on first setup.
 
-Each output contributes ten: bass, treble, balance, max volume, turn-on volume, and one gain per
-EQ band. Band **frequency** is a `select`, not a number -- see `select.py` for why. Band **Q** is
-not settable at all; it rides along as an attribute on the band's gain entity, which keeps the
-whole band visible in one place without adding five more entities per output.
+Each output contributes: bass, treble, balance, turn-on volume, and one gain per EQ band. Band
+**frequency** and **Q** are `select` entities rather than numbers -- both are indices into small
+fixed tables, so see `select.py` for the reasoning. Both also ride along as attributes on the
+band's gain entity, so the whole band stays legible in one glance and a template can read its
+shape from a single state object.
 """
 
 from __future__ import annotations

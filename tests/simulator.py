@@ -103,6 +103,8 @@ class MatrixState:
     inputs_with_signal: set[int] = field(default_factory=set)
     #: Minutes of silence before an analog input sleeps. Hardware default is 1.
     audio_sense_off_delay: int = 1
+    #: 12 V trigger banks by wire index, plus the ASG index. All off from the factory.
+    triggers: dict[int, bool] = field(default_factory=dict)
     channels: dict[int, OutputState] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
@@ -262,6 +264,9 @@ class AmsSimulator:
         if group == 0x01 and opcode == 0x01:
             return "Get Power status : Working"
 
+        if group == 0x05 and opcode in (0x50, 0x51):
+            return self._trigger(opcode, rest, query=query)
+
         if group == 0x0A and opcode == 0xA2:
             if query:
                 word = "Enable" if self.state.audio_sense_enabled else "Disable"
@@ -356,6 +361,21 @@ class AmsSimulator:
             return f"Set Out[{output}] Stereo Mono"
 
         return "Command error"
+
+    def _trigger(self, opcode: int, rest: bytes, *, query: bool) -> str:
+        """Trigger banks are indexed on the wire; ASG sits after the last output bank.
+
+        On an 8x8 that puts ASG at index 1 -- the same index a 24x24 uses for its 9-16 bank -- so
+        this double answers by index and lets the client be the thing that knows the difference.
+        """
+        index = rest[0]
+        banks = -(-self.state.outputs // 8)
+        if not query:
+            self.state.triggers[index] = opcode == 0x50
+            return "Set trigger"
+        on = self.state.triggers.get(index, False)
+        label = "ASG" if index >= banks else f"Zone {index * 8 + 1}-{index * 8 + 8}"
+        return f"Get {label} trigger status : {'On' if on else 'Off'}"
 
     def _eq(self, channel, output: int, opcode: int, rest: bytes, *, query: bool) -> str:
         """EQ opcodes are a base plus the 0-based band index; three parameters share the range."""
