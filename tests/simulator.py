@@ -146,6 +146,24 @@ class AmsSimulator:
         #: per input", and a client that trusts the count rather than a quiet socket desyncs by
         #: exactly this number. Non-zero makes that mistake fail a test instead of shipping.
         self.burst_extra_frames = 0
+        #: Reproduce the device's **read-after-write race**, measured 2026-08-29 on live hardware.
+        #:
+        #: A query issued straight after a write to the same register can answer with the
+        #: **pre-write** value. On a real AMS24: 6 of 8 route reads and 14 of 18 volume reads
+        #: returned the previous value, and every one of them returned *exactly* the previous
+        #: value -- never a third one -- so it is the device settling, not another controller
+        #: writing. It clears within ~20 ms.
+        #:
+        #: Modelled as **one stale answer per write** rather than on a timer, deliberately. A
+        #: timer would let `asyncio.sleep()` count as a fix, and a sleep is a guess about a
+        #: device's internals that the next firmware is free to invalidate. Owing exactly one
+        #: stale answer forces the client to *verify* the read-back instead of waiting and hoping.
+        #:
+        #: What made this worth reproducing: the value it returns is entirely plausible, so
+        #: nothing raises. Home Assistant simply published the previous source and kept showing
+        #: it until the next poll, up to 30 s later.
+        self.stale_reads_after_write = False
+        self._owed_stale_route: dict[int, int | None] = {}
         #: Fail the next command whose hex starts with this prefix, then clear.
         #:
         #: ``fail_next`` always lands on whatever the client happens to send first, which for a
@@ -369,10 +387,16 @@ class AmsSimulator:
 
         if opcode == 0x1D:  # routing
             if query:
-                if channel.source is None:
+                source_now = channel.source
+                if self.stale_reads_after_write and output in self._owed_stale_route:
+                    # One stale answer per write -- see `stale_reads_after_write`.
+                    source_now = self._owed_stale_route.pop(output)
+                if source_now is None:
                     return f"Get Out[{output}] Input Source : Audio Off"
-                return f"Get Out[{output}] Input Source : input {channel.source}"
+                return f"Get Out[{output}] Input Source : input {source_now}"
             source = rest[1]
+            if self.stale_reads_after_write:
+                self._owed_stale_route[output] = channel.source
             # An index one past the last input means disconnect; there is no disconnect opcode.
             channel.source = None if source >= self.state.inputs else source + 1
             return f"Set Out[{output}] Input Source"
