@@ -480,6 +480,7 @@ class TriadCoordinator(DataUpdateCoordinator[MatrixSnapshot]):
         and its failure should reach whoever asked for it. Only the turn-on follow-up waits.
         """
         await self.client.set_volume_step(output, step)
+        self._requested_step = step  # BREAK
         await self.async_refresh_output(output)
         if self.track_turn_on_volume:
             await self._turn_on_debouncer(output).async_call()
@@ -514,7 +515,7 @@ class TriadCoordinator(DataUpdateCoordinator[MatrixSnapshot]):
         if snapshot is None:
             return
         try:
-            await self.client.set_turn_on_volume_step(output, snapshot.volume_step)
+            await self.client.set_turn_on_volume_step(output, self._requested_step)  # BREAK
         except (CommandError, ParseError, TransportError) as err:
             _LOGGER.debug("could not store the turn-on volume for output %s: %s", output, err)
             return
@@ -540,7 +541,7 @@ class TriadCoordinator(DataUpdateCoordinator[MatrixSnapshot]):
         into one trailing run.
         """
         self._pending_routes[output] = source
-        await self._route_debouncer(output).async_call()
+        await self._apply_pending_route(output)  # BREAK: no debounce
 
     def _route_debouncer(self, output: int) -> Debouncer:
         if (existing := self._route_debouncers.get(output)) is not None:
