@@ -9,7 +9,7 @@ import pytest
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er
 
-from tests.ha.conftest import make_entry
+from tests.ha.conftest import channel_input, make_entry
 from tests.simulator import AmsSimulator
 
 pytestmark = pytest.mark.enable_socket
@@ -295,8 +295,7 @@ class TestMaxVolumeReachesTheDevice:
         entry = await _setup(hass, simulator, options={"output_max_volumes": {"1": 100}})
 
         result = await hass.config_entries.options.async_init(entry.entry_id)
-        user_input = {f"output_{i}": True for i in range(1, 9)}
-        user_input |= {f"input_{i}": True for i in range(1, 9)}
+        user_input = channel_input("AMS8")
         user_input |= {f"max_volume_{i}": 100 for i in range(1, 9)}
         user_input["max_volume_1"] = 40
         user_input["scan_interval"] = 30

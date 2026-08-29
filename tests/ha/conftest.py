@@ -16,6 +16,7 @@ from collections.abc import AsyncIterator
 import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
+from custom_components.triad_ams.ams.model import MatrixSpec
 from custom_components.triad_ams.const import DOMAIN
 from tests.simulator import AmsSimulator
 
@@ -77,3 +78,21 @@ def make_entry(
         },
         options=options or {},
     )
+
+
+def channel_input(
+    model: str, *, outputs_off: set[int] | None = None, inputs_off: set[int] | None = None
+) -> dict[str, bool]:
+    """The channel checkboxes a form submission carries, named as the schema names them.
+
+    Derived from ``MatrixSpec`` rather than spelled out, because the key now carries the
+    connector kind and that varies by model -- input 5 is ``input_5_shared`` on an AMS8 and
+    ``input_5_analog`` on an AMS24. Hardcoding either would pass on one model and fail on the
+    other for a reason that reads as a schema bug.
+    """
+    spec = MatrixSpec.for_model(model)
+    off_out, off_in = outputs_off or set(), inputs_off or set()
+    return {
+        **{spec.output_field(o): o not in off_out for o in range(1, spec.outputs + 1)},
+        **{spec.input_field(i): i not in off_in for i in range(1, spec.inputs + 1)},
+    }

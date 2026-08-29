@@ -14,7 +14,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
 
 from custom_components.triad_ams.const import DOMAIN
-from tests.ha.conftest import make_entry
+from tests.ha.conftest import channel_input, make_entry
 from tests.simulator import AmsSimulator
 
 pytestmark = pytest.mark.enable_socket
@@ -61,8 +61,7 @@ class TestAddingAMatrix:
         assert result["step_id"] == "channels"
 
         # Leave output 2 and input 3 unwired, which is the whole point of this step.
-        channels = {f"output_{i}": i != 2 for i in range(1, 9)}
-        channels |= {f"input_{i}": i != 3 for i in range(1, 9)}
+        channels = channel_input("AMS8", outputs_off={2}, inputs_off={3})
         channels["scan_interval"] = 45
         result = await hass.config_entries.flow.async_configure(result["flow_id"], channels)
 
@@ -87,8 +86,7 @@ class TestAddingAMatrix:
         assert result["step_id"] == "channels"
         result = await hass.config_entries.flow.async_configure(
             result["flow_id"],
-            {f"output_{i}": True for i in range(1, 25)}
-            | {f"input_{i}": True for i in range(1, 25)},
+            channel_input("AMS24"),
         )
         assert result["data"]["output_count"] == 24
         assert result["data"]["input_count"] == 24
@@ -122,8 +120,7 @@ class TestVolumeCapsReachingTheDevice:
         entry.add_to_hass(hass)  # Added, deliberately never set up: no runtime_data.
 
         result = await hass.config_entries.options.async_init(entry.entry_id)
-        user_input = {f"output_{i}": True for i in range(1, 9)}
-        user_input |= {f"input_{i}": True for i in range(1, 9)}
+        user_input = channel_input("AMS8")
         user_input |= {f"max_volume_{i}": 100 for i in range(1, 9)}
         user_input["max_volume_1"] = 40
         user_input["scan_interval"] = 30
@@ -148,8 +145,7 @@ class TestVolumeCapsReachingTheDevice:
         await sim.stop()  # The matrix goes away between opening the form and submitting it.
 
         result = await hass.config_entries.options.async_init(entry.entry_id)
-        user_input = {f"output_{i}": True for i in range(1, 9)}
-        user_input |= {f"input_{i}": True for i in range(1, 9)}
+        user_input = channel_input("AMS8")
         user_input |= {f"max_volume_{i}": 100 for i in range(1, 9)}
         user_input["max_volume_1"] = 55
         user_input["scan_interval"] = 30
