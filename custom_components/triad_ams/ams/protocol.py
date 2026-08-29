@@ -231,9 +231,22 @@ def query_eq_q(spec: MatrixSpec, output: int, band: int) -> bytes:
 # -- inputs ------------------------------------------------------------------------------------
 
 
-def set_input_gain(spec: MatrixSpec, source: int, gain: int) -> bytes:
-    """Input gain is sent doubled, per the Control4 driver."""
-    return _frame(bytes([0x02, 0x04, spec.input_byte(source), gain * 2]))
+#: Input gain is boost-only: 0..+12 dB, sent doubled, so raw 0x00..0x18.
+MIN_INPUT_GAIN_DB: Final = 0.0
+MAX_INPUT_GAIN_DB: Final = 12.0
+
+
+def set_input_gain(spec: MatrixSpec, source: int, gain: float) -> bytes:
+    """Set an input's gain in dB. Boost only -- there is no attenuation here.
+
+    Sent doubled, giving 0.5 dB resolution. Measured 2026-08-29: raw 0x0C reads back as 6, and
+    the device **clamps** above 0x18 -- raw 0x1E still reports 12. So an out-of-range write looks
+    like it worked, which is why the range is enforced here rather than left to the device.
+    """
+    if not MIN_INPUT_GAIN_DB <= gain <= MAX_INPUT_GAIN_DB:
+        msg = f"input gain {gain} outside {MIN_INPUT_GAIN_DB}..{MAX_INPUT_GAIN_DB} dB"
+        raise ValueError(msg)
+    return _frame(bytes([0x02, 0x04, spec.input_byte(source), round(gain * 2)]))
 
 
 def query_input_gain(spec: MatrixSpec, source: int) -> bytes:

@@ -105,6 +105,8 @@ class MatrixState:
     audio_sense_off_delay: int = 1
     #: 12 V trigger banks by wire index, plus the ASG index. All off from the factory.
     triggers: dict[int, bool] = field(default_factory=dict)
+    #: Per-input gain, stored as the raw doubled value the wire carries.
+    input_gain_raw: dict[int, int] = field(default_factory=dict)
     channels: dict[int, OutputState] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
@@ -266,6 +268,16 @@ class AmsSimulator:
 
         if group == 0x05 and opcode in (0x50, 0x51):
             return self._trigger(opcode, rest, query=query)
+
+        if group == 0x02 and opcode == 0x04:
+            source = rest[0]
+            if query:
+                # The device clamps above 0x18; reproduce that rather than reporting a value
+                # it would never actually apply.
+                raw = min(self.state.input_gain_raw.get(source, 0), 24)
+                return f"Get In[{source + 1}] input gain : {raw / 2:g}"
+            self.state.input_gain_raw[source] = rest[1]
+            return f"Set In[{source + 1}] input gain"
 
         if group == 0x0A and opcode == 0xA2:
             if query:

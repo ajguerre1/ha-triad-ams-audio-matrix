@@ -77,6 +77,8 @@ class MatrixSnapshot:
     dsp: dict[int, OutputDsp] = field(default_factory=dict)
     #: 12 V trigger banks by 1-based bank number, plus ``asg``. Only read when consumed.
     triggers: dict[str, bool] = field(default_factory=dict)
+    #: Per-input gain in dB. Shares the input tier with audio sense.
+    input_gains: dict[int, float] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
@@ -234,7 +236,32 @@ class TriadCoordinator(DataUpdateCoordinator[MatrixSnapshot]):
             audio_sense_off_delay=delay,
             dsp=await self._read_dsp(),
             triggers=await self._read_triggers(),
+            input_gains=await self._read_input_gains(),
         )
+
+    async def _read_input_gains(self) -> dict[int, float]:
+        """Gains ride the same tier as audio sense -- both are per-input reads."""
+        if not self.polls_inputs:
+            return self.data.input_gains if self.data else {}
+        readings: dict[int, float] = {}
+        for source in self.active_inputs:
+            try:
+                readings[source] = await self.client.get_input_gain(source)
+            except (CommandError, ParseError) as err:
+                _LOGGER.debug("input %s gain did not answer cleanly: %s", source, err)
+        return readings
+
+    async def async_refresh_inputs(self) -> None:
+        """Re-read per-input state after a write."""
+        current = self.data
+        if current is None:
+            return
+        try:
+            gains = await self._read_input_gains()
+        except TransportError as err:
+            _LOGGER.debug("could not re-read input gains: %s", err)
+            return
+        self.async_set_updated_data(replace(current, input_gains=gains))
 
     async def _read_triggers(self) -> dict[str, bool]:
         """Read the trigger banks this model has, and only when something consumes them."""

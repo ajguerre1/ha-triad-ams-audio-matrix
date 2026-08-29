@@ -23,10 +23,11 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from . import TriadConfigEntry
 from .ams.errors import TriadError
+from .ams.protocol import MAX_INPUT_GAIN_DB, MIN_INPUT_GAIN_DB
 from .ams.settings import EntrySettings
 from .ams.volume import MAX_STEP
 from .coordinator import OutputDsp, TriadCoordinator
-from .entity import TriadOutputDspEntity
+from .entity import TriadInputEntity, TriadOutputDspEntity
 
 #: Tone controls share one encoding and therefore one range: -12..+12 dB in half-steps.
 TONE_MIN, TONE_MAX, TONE_STEP = -12.0, 12.0, 0.5
@@ -108,6 +109,9 @@ async def async_setup_entry(
     for output in settings.active_outputs:
         entities.extend(TriadToneNumber(coordinator, entry, output, spec) for spec in TONE_SPECS)
         entities.extend(TriadEqGainNumber(coordinator, entry, output, band) for band in EQ_BANDS)
+    entities.extend(
+        TriadInputGainNumber(coordinator, entry, source) for source in settings.active_inputs
+    )
     async_add_entities(entities)
 
 
@@ -198,3 +202,46 @@ class TriadEqGainNumber(TriadNumberBase):
 
     async def async_set_native_value(self, value: float) -> None:
         await self._apply(self.coordinator.client.set_eq_gain(self._output, self._band, value))
+
+
+class TriadInputGainNumber(TriadInputEntity, NumberEntity):
+    """Trim on one input.
+
+    Boost only -- 0 to +12 dB, in the 0.5 dB steps the doubled wire encoding allows. There is no
+    attenuation: the device offers none, and a slider that went negative would look like it
+    worked while the hardware clamped it.
+
+    Shares the input polling tier with audio sense, since both are per-input reads.
+    """
+
+    _attr_entity_registry_enabled_default = False
+    _attr_entity_category = EntityCategory.CONFIG
+    _attr_mode = NumberMode.BOX
+    _attr_native_min_value = MIN_INPUT_GAIN_DB
+    _attr_native_max_value = MAX_INPUT_GAIN_DB
+    _attr_native_step = 0.5
+    _attr_native_unit_of_measurement = UnitOfSoundPressure.DECIBEL
+
+    def __init__(self, coordinator: TriadCoordinator, entry: TriadConfigEntry, source: int) -> None:
+        super().__init__(coordinator, entry, source)
+        self._attr_unique_id = f"{entry.entry_id}_input_{source}_gain"
+        self._attr_name = f"Input {source} gain"
+
+    def registers_input_polling(self) -> bool:
+        return True
+
+    @property
+    def available(self) -> bool:
+        return super().available and self.input_gain is not None
+
+    @property
+    def native_value(self) -> float | None:
+        return self.input_gain
+
+    async def async_set_native_value(self, value: float) -> None:
+        try:
+            await self.coordinator.client.set_input_gain(self._source, value)
+        except TriadError as err:
+            msg = f"command failed for input {self._source}: {err}"
+            raise HomeAssistantError(msg) from err
+        await self.coordinator.async_refresh_inputs()

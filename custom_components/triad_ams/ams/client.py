@@ -257,6 +257,18 @@ class AmsClient:
             raise ParseError(msg)
         return detected
 
+    async def get_input_gain(self, source: int) -> float:
+        """Input gain in dB, 0..+12."""
+        text = await self._exchange(p.query_input_gain(self.spec, source))
+        index, gain = p.parse_input_gain(text)
+        if index != source:
+            msg = f"asked input {source} for gain, device answered for input {index}"
+            raise ParseError(msg)
+        return gain
+
+    async def set_input_gain(self, source: int, gain: float) -> None:
+        await self._write(p.set_input_gain(self.spec, source, gain))
+
     async def get_audio_sense_enabled(self) -> bool:
         """Whether this matrix measures audio sense at all."""
         return p.parse_audio_sense_enabled(await self._exchange(p.query_audio_sense_enabled()))

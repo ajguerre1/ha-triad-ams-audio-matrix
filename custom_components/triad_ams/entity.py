@@ -127,6 +127,11 @@ class TriadInputEntity(TriadEntity):
         """Whether this entity needs the coordinator to poll inputs. Override to opt in."""
         return False
 
+    @property
+    def input_gain(self) -> float | None:
+        data = self.coordinator.data
+        return data.input_gains.get(self._source) if data else None
+
     async def async_added_to_hass(self) -> None:
         """Ask the coordinator for input data, and stop asking when removed.
 
