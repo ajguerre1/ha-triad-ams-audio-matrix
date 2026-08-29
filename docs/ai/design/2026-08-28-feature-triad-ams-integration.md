@@ -190,8 +190,24 @@ later as a zone that turns on louder than it can go.
 
 ### FR-13 — routing debounce
 
-Per-output `homeassistant.helpers.debounce.Debouncer`, `immediate=False`, cooldown 0.25 s,
-wrapping the write **and its re-read**.
+Per-output `homeassistant.helpers.debounce.Debouncer`, cooldown 0.25 s, wrapping the write **and
+its re-read**.
+
+**`immediate=True` — corrected during implementation.** The design originally specified
+`immediate=False`, matching the Control4 driver's trailing debounce. CI caught what that means
+here: `select_source` returned before the write reached the device, so a caller checking state
+straight afterwards read the old source. Two `media_player` tests failed on exactly that, and they
+were right to.
+
+The trailing edge is correct for Control4 because its UI streams a route command per scroll step.
+Home Assistant's `select_source` is a discrete choice, so there is nothing to wait for, and
+delaying it turns a synchronous operation asynchronous for no benefit.
+
+Leading gives both halves: the first call is **awaited**, so its failure still raises at whoever
+asked, while a runaway automation is still coalesced into one trailing run. Verified against Home
+Assistant's `Debouncer` source rather than assumed — `async_call` awaits the job and lets
+exceptions propagate, and only `_handle_timer_finish` catches and logs. That asymmetry is the
+right way round: the trailing run has no caller left to raise at.
 
 **It must wrap the pair, not sit inside `AmsClient.set_route`.** A debounce in the client returns
 before the write reaches the device, so D-08's re-read would read state the write had not yet
@@ -331,7 +347,7 @@ cycle risk as platforms multiply. They belong on the entry-derived config object
 | D-08 | Write then re-read that output only | Full refresh; optimistic update | The device caps volume against its own max-volume register, and **clamps out-of-range Q and input gain silently while reporting success**. Optimistic state would show a value the device never adopted. *(The second original reason — another controller may have just moved the zone — retired 2026-08-29 with coexistence. The first is sufficient alone, which is why the decision stands.)* |
 | D-09 | `MatrixSpec` value object | Keep threading two ints | Removes ~40 repeated parameter pairs and centralises the model-dependent ASG index |
 | D-10 | Tiered polling for DSP attributes | Poll everything; per-entity polling | Poll-everything violates NFR-01; per-entity polling breaks D-02's serialisation |
-| D-11 | Debounces wrap the write **and its re-read** | Debounce inside `AmsClient` | A debounce in the client returns before the write lands, so D-08's re-read reads pre-write state. The ordering inversion is silent — the value is plausible, just stale |
+| D-11 | Debounces wrap the write **and its re-read**, on the **leading** edge | Debounce inside `AmsClient`; trailing edge as Control4 does | A debounce in the client returns before the write lands, so D-08's re-read reads pre-write state — silent, because the value is plausible and merely stale. Trailing was corrected to leading during implementation: Home Assistant's `select_source` is discrete, not a scroll stream, so delaying it only made a synchronous call asynchronous. Leading still coalesces a runaway caller, and keeps errors raising at the one who asked |
 | D-12 | An option decides which entity **exists**, never an entity's writability | "Read-only while tracking" flag | A setting that changes another entity's behaviour is a synchronised flag. Home Assistant has no read-only `number`, so it would mean raising on write or swapping platforms. `active_outputs` already sets the precedent |
 | D-13 | Bursty writes get a **named method**, not a flag on the write path | `send(..., bursty=True)` | Exactly one command replies with a burst. A flag would put the expensive quiet-socket drain in the hot path of every write to serve that one |
 | D-14 | One setting, two enforcement points | Max volume as a second entity; device register only | The value has a home already. A second home is two sources of truth; the device register is an additional *enforcement* of the same value, not a second value |
