@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 from homeassistant.components.media_player import (
     ATTR_INPUT_SOURCE,
@@ -14,14 +16,26 @@ from homeassistant.components.media_player import (
 )
 from homeassistant.const import ATTR_ENTITY_ID, SERVICE_TURN_OFF, STATE_OFF, STATE_ON
 from homeassistant.core import HomeAssistant
-from pytest_homeassistant_custom_component.common import async_fire_time_changed
 
+from custom_components.triad_ams.coordinator import ROUTE_DEBOUNCE_SECONDS
 from tests.ha.conftest import make_entry
 from tests.simulator import AmsSimulator
 
 pytestmark = pytest.mark.enable_socket
 
 ENTITY = "media_player.test_matrix_output_1"
+
+
+async def _settle(hass: HomeAssistant) -> None:
+    """Let a Debouncer cooldown expire.
+
+    Real time, deliberately. ``Debouncer`` schedules with ``hass.loop.call_later``, which runs
+    on the event loop's own clock: ``async_fire_time_changed`` does not drive it, and freezing
+    the clock with ``freezer`` stops it firing at all. A first attempt used the freezer and hung
+    CI for fifteen minutes before it was cancelled.
+    """
+    await asyncio.sleep(ROUTE_DEBOUNCE_SECONDS + 0.15)
+    await hass.async_block_till_done()
 
 
 async def _setup(hass: HomeAssistant, sim: AmsSimulator, **kwargs):
@@ -130,7 +144,7 @@ class TestRoutingIsCoalesced:
     """FR-13. Nothing else proves the debounce does the one thing it exists for."""
 
     async def test_rapid_selections_reach_the_device_once(
-        self, hass: HomeAssistant, simulator: AmsSimulator, freezer
+        self, hass: HomeAssistant, simulator: AmsSimulator
     ) -> None:
         """Four selections inside the window must not become four writes.
 
@@ -145,17 +159,14 @@ class TestRoutingIsCoalesced:
             await _call(hass, SERVICE_SELECT_SOURCE, **{ATTR_INPUT_SOURCE: source})
         await hass.async_block_till_done()
 
-        # Let the cooldown expire so the coalesced trailing run fires.
-        freezer.tick(1.0)
-        async_fire_time_changed(hass)
-        await hass.async_block_till_done()
+        await _settle(hass)
 
         writes = len(_route_commands(simulator)) - before
         assert writes < 4, f"all four selections reached the device ({writes} writes)"
         assert writes >= 1, "nothing reached the device at all"
 
     async def test_the_last_selection_is_the_one_that_sticks(
-        self, hass: HomeAssistant, simulator: AmsSimulator, freezer
+        self, hass: HomeAssistant, simulator: AmsSimulator
     ) -> None:
         """Coalescing must keep the newest value, not the one that happened to arrive first."""
         await _setup(hass, simulator)
@@ -163,9 +174,7 @@ class TestRoutingIsCoalesced:
         for source in ("Input 2", "Input 3", "Input 6"):
             await _call(hass, SERVICE_SELECT_SOURCE, **{ATTR_INPUT_SOURCE: source})
         await hass.async_block_till_done()
-        freezer.tick(1.0)
-        async_fire_time_changed(hass)
-        await hass.async_block_till_done()
+        await _settle(hass)
 
         assert simulator.state.channels[1].source == 6
 

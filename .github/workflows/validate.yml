@@ -60,6 +60,10 @@ jobs:
   test:
     name: pytest
     runs-on: ubuntu-latest
+    # The suite runs in about a minute. This exists because a test that waits on an event-loop
+    # timer while the clock is frozen does not fail -- it hangs, and would otherwise occupy a
+    # runner until GitHub's six-hour default. Ten minutes is generous and still fails fast.
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7

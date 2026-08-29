@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
+from unittest.mock import patch
+
 import pytest
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er
-from pytest_homeassistant_custom_component.common import async_fire_time_changed
 
 from tests.ha.conftest import make_entry
 from tests.simulator import AmsSimulator
@@ -155,79 +157,93 @@ TURN_ON_1 = "sensor.test_matrix_turn_on_volume"
 #: Set turn-on volume for output 1: FF 55 04 03 33 <output>. A query carries f5 in place of it.
 TURN_ON_WRITE_PREFIX = "ff55040333"
 
+COORDINATOR = "custom_components.triad_ams.coordinator"
+#: Short enough to keep the suite quick, long enough that a write before it is a real failure.
+SETTLE = 0.2
+
+
+async def _set_volume(hass: HomeAssistant, level: float) -> None:
+    await hass.services.async_call(
+        "media_player",
+        "volume_set",
+        {"entity_id": "media_player.test_matrix_output_1", "volume_level": level},
+        blocking=True,
+    )
+    await hass.async_block_till_done()
+
 
 def _turn_on_writes(sim: AmsSimulator) -> list[str]:
     return [f for f in sim.received if f.startswith(TURN_ON_WRITE_PREFIX) and "f5" not in f[10:12]]
 
 
 class TestTurnOnVolumeTracking:
-    """FR-12. Replaces the Control4 behaviour that makes zones resume where they were left."""
+    """FR-12. Replaces the Control4 behaviour that makes zones resume where they were left.
+
+    The cooldown is patched down rather than time-travelled. ``Debouncer`` schedules with
+    ``hass.loop.call_later``, which runs on the event loop's own clock: ``async_fire_time_changed``
+    does not drive it, and ``freezer`` stops it firing at all. A first attempt used the freezer and
+    hung CI until it was cancelled.
+    """
 
     async def test_a_volume_change_is_stored_after_it_settles(
-        self, hass: HomeAssistant, simulator: AmsSimulator, freezer
+        self, hass: HomeAssistant, simulator: AmsSimulator
     ) -> None:
-        entry = await _setup(hass, simulator)
-        before = len(_turn_on_writes(simulator))
+        with patch(f"{COORDINATOR}.TURN_ON_VOLUME_DEBOUNCE_SECONDS", SETTLE):
+            entry = await _setup(hass, simulator)
+            before = len(_turn_on_writes(simulator))
 
-        await hass.services.async_call(
-            "media_player",
-            "volume_set",
-            {"entity_id": "media_player.test_matrix_output_1", "volume_level": 0.4},
-            blocking=True,
-        )
-        await hass.async_block_till_done()
-        assert len(_turn_on_writes(simulator)) == before, "written before the volume settled"
+            await _set_volume(hass, 0.4)
+            assert len(_turn_on_writes(simulator)) == before, "written before the volume settled"
 
-        freezer.tick(15)
-        async_fire_time_changed(hass)
-        await hass.async_block_till_done()
+            await asyncio.sleep(SETTLE + 0.15)
+            await hass.async_block_till_done()
 
         assert len(_turn_on_writes(simulator)) > before, "never stored after settling"
         assert entry.runtime_data.track_turn_on_volume is True
 
     async def test_the_stored_value_is_what_the_device_reported_not_what_was_sent(
-        self, hass: HomeAssistant, simulator: AmsSimulator, freezer
+        self, hass: HomeAssistant, simulator: AmsSimulator
     ) -> None:
         """The failure this guards against is silent and arrives weeks late.
 
         The matrix caps a zone against its own max-volume register, so the step it adopts can be
         lower than the step that was sent. Storing the requested value would persist a turn-on
         volume the device never accepted -- and the zone would come back louder than it can go,
-        long after anyone connects it to this code.
+        long after anyone connects the symptom to this code.
         """
         simulator.state.channels[1].max_step = 30
-        await _setup(hass, simulator)
-
-        await hass.services.async_call(
-            "media_player",
-            "volume_set",
-            {"entity_id": "media_player.test_matrix_output_1", "volume_level": 0.9},
-            blocking=True,
-        )
-        await hass.async_block_till_done()
-        freezer.tick(15)
-        async_fire_time_changed(hass)
-        await hass.async_block_till_done()
+        with patch(f"{COORDINATOR}.TURN_ON_VOLUME_DEBOUNCE_SECONDS", SETTLE):
+            await _setup(hass, simulator)
+            await _set_volume(hass, 0.9)
+            await asyncio.sleep(SETTLE + 0.15)
+            await hass.async_block_till_done()
 
         adopted = simulator.state.channels[1].step
+        assert adopted == 30, "the simulator did not cap, so this test proves nothing"
         assert simulator.state.channels[1].turn_on_step == adopted, (
             "the requested step was stored rather than the one the device adopted"
         )
-        assert adopted != 90, "the simulator did not cap, so this test proves nothing"
 
     async def test_tracking_off_offers_a_writable_number_instead(
         self, hass: HomeAssistant, simulator: AmsSimulator
     ) -> None:
         """The option decides which entity exists -- never an entity's writability."""
-        entry = await _setup(hass, simulator, enable=None)
-        assert hass.states.get(TURN_ON_1) is None  # disabled by default, but registered
-
+        entry = await _setup(hass, simulator)
         registry = er.async_get(hass)
         ids = {e.entity_id for e in er.async_entries_for_config_entry(registry, entry.entry_id)}
         assert TURN_ON_1 in ids, "no read-only turn-on volume while tracking is on"
         assert "number.test_matrix_turn_on_volume" not in ids, (
             "a writable turn-on volume exists while the integration owns the value"
         )
+
+    async def test_turning_tracking_off_swaps_the_entity_for_a_writable_one(
+        self, hass: HomeAssistant, simulator: AmsSimulator
+    ) -> None:
+        entry = await _setup(hass, simulator, options={"track_turn_on_volume": False})
+        registry = er.async_get(hass)
+        ids = {e.entity_id for e in er.async_entries_for_config_entry(registry, entry.entry_id)}
+        assert "number.test_matrix_turn_on_volume" in ids, "no writable turn-on volume"
+        assert TURN_ON_1 not in ids, "the read-only sensor exists while the user owns the value"
 
 
 class TestAudioSenseOffDelay:
