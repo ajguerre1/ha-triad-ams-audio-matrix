@@ -114,6 +114,55 @@ plausible-looking response text would make the tests agree with a misreading of 
       every existing installation on upgrade
 - [x] Explicit `true` and `false` are both honoured
 
+#### The replacement features on the HA layer — tasks 31-36
+
+- [x] **Rapid selections reach the device once** (FR-13). Four selections inside the window; the
+      leading edge sends the first, the rest coalesce into one trailing run
+- [x] The last selection is the one that sticks — coalescing must keep the newest value
+- [x] A single selection is **not delayed**. This is the test that would have caught the original
+      trailing-edge debounce
+- [x] **Turn-on volume stores what the device reported, not what was sent** (FR-12)
+- [x] A volume change is not stored before it settles
+- [x] Tracking on gives a read-only sensor; tracking off gives a writable number, and never both
+- [x] Audio-sense switch toggles measuring, and its **reply burst does not desync the stream**
+      end to end (C-09 through the entity, not only at the client)
+- [x] The switch does not drag the per-input tier with it — one matrix-wide flag must not cost
+      one read per input
+- [x] Off-delay number round-trips, in minutes
+- [x] The repair **fixes itself**: the flow enables measuring and the issue clears
+- [x] `apply_eq_preset` writes all five bands, and works with **every DSP entity disabled** —
+      which is the reason it lives on `media_player`
+- [x] Max volume reaches the device on an options change and **not** on connect (D-05 still holds)
+
+### Regression-verified
+
+Each of the two load-bearing guards was removed on a throwaway branch and the suite re-run. The
+result was **exactly two failures, the right two**, with messages naming the real defect:
+
+| Guard removed | Test that caught it | Message |
+|---|---|---|
+| The routing debounce | `test_rapid_selections_reach_the_device_once` | `all four selections reached the device (4 writes)` |
+| Storing the re-read value | `test_the_stored_value_is_what_the_device_reported_not_what_was_sent` | `the requested step was stored rather than the one the device adopted` |
+
+Nothing else failed, so neither test is passing for an unrelated reason.
+
+### Two findings from writing these
+
+**The simulator's volume taper was wrong, and it had been wrong all along.** It interpolated
+decibels from twenty points, on the stated grounds that a straight line was "close enough for a
+test double". It was not: **78 of the 101 steps failed a step → dB → step round trip** — step 30
+reported −38.8 dB, which parses back as step 26. Every volume assertion in this suite had been
+made against a curve the hardware does not have, and the turn-on test could not have passed
+however correct the code was. The table is now duplicated literally, exactly as the frequency and
+Q tables in the same file already are and for the same stated reason. All 101 steps round-trip.
+
+**`freezer` cannot drive a `Debouncer`.** It schedules with `hass.loop.call_later`, which runs on
+the event loop's own clock: `async_fire_time_changed` does not drive it, and freezing the clock
+stops it firing at all. The first version of these tests hung CI for fifteen minutes before it was
+cancelled. Route coalescing now waits out the real 0.25 s; turn-on patches its 10 s constant down
+to 0.2 s. The pytest job gained `timeout-minutes: 10`, because a hang is not a failure — it would
+otherwise hold a runner until GitHub's six-hour default.
+
 ### Privacy
 
 - [x] The audit enumerates a real set of files
@@ -167,17 +216,46 @@ validation, ruff check and format, and the strings/translations parity diff.
 directory is ignored wholesale rather than by glob, because pytest loads a conftest before
 applying any file-level ignore.
 
-**Results, 2026-08-28**
+**Results, 2026-08-29** *(supersedes the 2026-08-28 figures below)*
 
 | Run | Where | Result |
 |---|---|---|
-| Offline suite | Windows dev box | **92 passed**, exit 0 |
-| Full suite | CI (Ubuntu) | **119 passed**, exit 0 |
+| Offline suite | Windows dev box | **148 passed**, exit 0 |
+| Full suite | CI (Ubuntu) | **235 passed**, exit 0 |
+| Coverage | CI | **88%** overall |
 | `ruff check` / `ruff format --check` | Both | Clean, exit 0 |
 | hassfest, HACS validation, strings parity | CI | Pass |
 
-The 27-test gap between the two runs is exactly `tests/ha/`, and it is the part that cannot be
-verified locally at any point. CI is the gate for it.
+**Coverage is measured in CI, not locally, and the distinction matters.** A local run reports 82%
+for `ams/` alone and understates it, because everything the entities exercise is invisible to a
+suite that cannot import Home Assistant. Measured where the whole suite runs:
+
+| Area | Coverage |
+|---|---|
+| `ams/eq`, `errors`, `model`, `presets`, `settings`, `volume` | **100%** |
+| `ams/protocol` | 88% |
+| `binary_sensor`, `const`, `diagnostics` | 100% |
+| `entity`, `sensor` | 96-97% |
+| `number`, `switch`, `repairs` | 90-91% |
+| `services` | 87% |
+| `coordinator` | 81% |
+| `media_player`, `select` | 72-73% |
+| **Total** | **88%** |
+
+The thin areas are named rather than rounded away. `config_flow` sits at **61%** — the add-a-matrix
+steps are the least covered thing in the repository, and that is the flow a *new* installation
+depends on entirely. It is not on the cutover path here, since the entries already exist and are
+adopted, which is why it is recorded as a known gap rather than treated as blocking.
+
+**Superseded, 2026-08-28**
+
+| Run | Where | Result |
+|---|---|---|
+| Offline suite | Windows dev box | 92 passed |
+| Full suite | CI (Ubuntu) | 119 passed |
+
+The gap between the two runs is exactly `tests/ha/`, and it is the part that cannot be verified
+locally at any point. CI is the gate for it.
 
 ## Manual Testing
 
