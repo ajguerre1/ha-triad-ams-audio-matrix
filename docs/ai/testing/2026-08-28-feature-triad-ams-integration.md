@@ -220,9 +220,9 @@ applying any file-level ignore.
 
 | Run | Where | Result |
 |---|---|---|
-| Offline suite | Windows dev box | **148 passed**, exit 0 |
-| Full suite | CI (Ubuntu) | **235 passed**, exit 0 |
-| Coverage | CI | **88%** overall |
+| Offline suite | Windows dev box | **149 passed**, exit 0 |
+| Full suite | CI (Ubuntu) | **245 passed**, exit 0 |
+| Coverage | CI | **90%** overall; `config_flow` **100%** |
 | `ruff check` / `ruff format --check` | Both | Clean, exit 0 |
 | hassfest, HACS validation, strings parity | CI | Pass |
 
@@ -233,19 +233,32 @@ suite that cannot import Home Assistant. Measured where the whole suite runs:
 | Area | Coverage |
 |---|---|
 | `ams/eq`, `errors`, `model`, `presets`, `settings`, `volume` | **100%** |
+| `ams/client` | 94% |
 | `ams/protocol` | 88% |
-| `binary_sensor`, `const`, `diagnostics` | 100% |
+| `__init__`, `binary_sensor`, `config_flow`, `const`, `diagnostics` | **100%** |
 | `entity`, `sensor` | 96-97% |
 | `number`, `switch`, `repairs` | 90-91% |
 | `services` | 87% |
-| `coordinator` | 81% |
-| `media_player`, `select` | 72-73% |
-| **Total** | **88%** |
+| `coordinator` | 83% |
+| `media_player`, `select` | 72-74% |
+| **Total** | **90%** |
 
-The thin areas are named rather than rounded away. `config_flow` sits at **61%** — the add-a-matrix
-steps are the least covered thing in the repository, and that is the flow a *new* installation
-depends on entirely. It is not on the cutover path here, since the entries already exist and are
-adopted, which is why it is recorded as a known gap rather than treated as blocking.
+**`config_flow` reached 100% on 2026-08-29**, from 61%. It had been the thinnest area, and the gap
+mattered more than the number suggested: the add-a-matrix flow is the only thing a *new*
+installation touches, and this installation never exercises it — its three entries already existed
+and were adopted. Nothing in daily use would ever have found a break there.
+
+What the new tests cover: the connection form; a matrix that does not answer (`cannot_connect`);
+a full walk through both steps with channels deselected; the model deciding the channel counts;
+the duplicate guard; and the two options-flow paths that only run when something is wrong — an
+entry that is not loaded when caps change, and a device that refuses the write. Both of the latter
+were **silent** until the phase 9 review, and both must keep the user's edit: the Home Assistant
+side clamp still enforces the cap, so failing the save over the hardware belt-and-braces would
+discard the whole edit.
+
+Remaining thin areas, named rather than rounded away: `media_player` and `select` at 72-74%, and
+`coordinator` at 83%. These are mostly error branches and entity properties reached only when a
+device misbehaves mid-command.
 
 **Superseded, 2026-08-28**
 
