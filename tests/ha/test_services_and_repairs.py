@@ -193,6 +193,7 @@ class TestTheRepairFixesItself:
     async def test_the_flow_enables_measuring_and_clears_the_issue(
         self, hass: HomeAssistant, simulator: AmsSimulator
     ) -> None:
+        from homeassistant.components.repairs import repairs_flow_manager
         from homeassistant.components.repairs.issue_handler import (
             async_process_repairs_platforms,
         )
@@ -210,7 +211,10 @@ class TestTheRepairFixesItself:
         assert registry.async_get_issue(DOMAIN, issue_id) is not None, "the issue was never raised"
 
         await async_process_repairs_platforms(hass)
-        manager = hass.data["repairs_flow_manager"]
+        # The public accessor, rather than reaching into hass.data for a key that is an internal
+        # detail -- the first version of this test guessed at that key and got it wrong.
+        manager = repairs_flow_manager(hass)
+        assert manager is not None, "the repairs component did not register a flow manager"
         flow = await manager.async_create_flow(
             issue_id, data={"entry_id": entry.entry_id}, context={"source": "user"}
         )
