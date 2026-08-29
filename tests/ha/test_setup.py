@@ -1,0 +1,142 @@
+"""Setup, identity and lifecycle against a simulated matrix.
+
+The identity assertions here are the most important tests in the repository. This integration
+replaces one that is live on 26 zones, and it keeps their entity IDs only by reproducing the
+previous ``unique_id`` and device-identifier schemes exactly. A refactor that changes either
+would not fail loudly -- Home Assistant would silently register new entities with a ``_2`` suffix
+and leave every dashboard card and automation pointing at an entity that no longer updates.
+"""
+
+from __future__ import annotations
+
+import pytest
+from homeassistant.config_entries import ConfigEntryState
+from homeassistant.core import HomeAssistant
+from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers import entity_registry as er
+
+from custom_components.triad_ams.const import DOMAIN
+from tests.ha.conftest import make_entry
+from tests.simulator import AmsSimulator
+
+pytestmark = pytest.mark.enable_socket
+
+
+async def _setup(hass: HomeAssistant, sim: AmsSimulator, **kwargs):
+    entry = make_entry(sim, **kwargs)
+    entry.add_to_hass(hass)
+    await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    return entry
+
+
+class TestSetup:
+    async def test_an_entry_creates_one_media_player_per_active_output(
+        self, hass: HomeAssistant, simulator: AmsSimulator
+    ) -> None:
+        entry = await _setup(hass, simulator)
+        assert entry.state is ConfigEntryState.LOADED
+        players = [s for s in hass.states.async_all() if s.entity_id.startswith("media_player.")]
+        assert len(players) == 8
+
+    async def test_only_the_selected_outputs_get_entities(
+        self, hass: HomeAssistant, simulator: AmsSimulator
+    ) -> None:
+        await _setup(hass, simulator, options={"active_outputs": [1, 2, 3]})
+        players = [s for s in hass.states.async_all() if s.entity_id.startswith("media_player.")]
+        assert len(players) == 3
+
+    async def test_an_unreachable_matrix_retries_rather_than_creating_dead_entities(
+        self, hass: HomeAssistant, simulator: AmsSimulator
+    ) -> None:
+        entry = make_entry(simulator)
+        await simulator.stop()  # Nothing is listening now.
+        entry.add_to_hass(hass)
+        await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+        assert entry.state is ConfigEntryState.SETUP_RETRY
+
+
+class TestIdentity:
+    async def test_entity_unique_ids_use_the_scheme_the_previous_integration_used(
+        self, hass: HomeAssistant, simulator: AmsSimulator
+    ) -> None:
+        """Pins C-07. Changing this format orphans every entity in the live installation."""
+        entry = await _setup(hass, simulator)
+        registry = er.async_get(hass)
+        entries = er.async_entries_for_config_entry(registry, entry.entry_id)
+        assert entries, "no entities were registered"
+        for e in entries:
+            assert e.unique_id.startswith(f"{entry.entry_id}_output_")
+        assert {e.unique_id for e in entries} == {
+            f"{entry.entry_id}_output_{n}" for n in range(1, 9)
+        }
+
+    async def test_the_device_is_identified_by_the_config_entry_id(
+        self, hass: HomeAssistant, simulator: AmsSimulator
+    ) -> None:
+        entry = await _setup(hass, simulator)
+        devices = dr.async_entries_for_config_entry(dr.async_get(hass), entry.entry_id)
+        assert len(devices) == 1
+        assert devices[0].identifiers == {(DOMAIN, entry.entry_id)}
+
+
+class TestNeverWritesOnConnect:
+    async def test_setting_up_only_reads_from_the_device(
+        self, hass: HomeAssistant, simulator: AmsSimulator
+    ) -> None:
+        """Pins design decision D-05, and it is not a stylistic one.
+
+        The Control4 driver pushes its cached state to the matrix on every reconnect, writing
+        every output. That is correct for the only controller and destructive for a second one:
+        a Home Assistant restart would overwrite whatever Control4 had just set, across all
+        56 outputs, with values Home Assistant happened to be holding.
+        """
+        await _setup(hass, simulator)
+        assert simulator.write_commands == [], (
+            f"setup wrote to the device: {simulator.write_commands}"
+        )
+
+
+class TestMigration:
+    async def test_an_entry_from_the_replaced_integration_loads_unchanged(
+        self, hass: HomeAssistant, simulator: AmsSimulator
+    ) -> None:
+        entry = await _setup(hass, simulator, version=1, minor_version=4)
+        assert entry.state is ConfigEntryState.LOADED
+        assert entry.version == 1
+        assert entry.minor_version == 4
+
+    async def test_an_entry_from_a_newer_schema_is_refused_rather_than_corrupted(
+        self, hass: HomeAssistant, simulator: AmsSimulator
+    ) -> None:
+        """What a downgrade looks like. Proceeding would rewrite an entry this code misreads."""
+        entry = make_entry(simulator, version=2, minor_version=1)
+        entry.add_to_hass(hass)
+        await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+        assert entry.state is ConfigEntryState.MIGRATION_ERROR
+
+
+class TestUnload:
+    async def test_unloading_closes_cleanly(
+        self, hass: HomeAssistant, simulator: AmsSimulator
+    ) -> None:
+        """The phase 7 audit found ``with asyncio.timeout(...)`` here, which raises TypeError.
+
+        Every unload and reload would have failed, including the reload that fires on an options
+        change. This is the test that would have caught it.
+        """
+        entry = await _setup(hass, simulator)
+        assert await hass.config_entries.async_unload(entry.entry_id)
+        await hass.async_block_till_done()
+        assert entry.state is ConfigEntryState.NOT_LOADED
+
+    async def test_changing_options_reloads_and_adjusts_the_entities(
+        self, hass: HomeAssistant, simulator: AmsSimulator
+    ) -> None:
+        entry = await _setup(hass, simulator)
+        hass.config_entries.async_update_entry(entry, options={"active_outputs": [1, 2]})
+        await hass.async_block_till_done()
+        players = [s for s in hass.states.async_all() if s.entity_id.startswith("media_player.")]
+        assert len(players) == 2

@@ -124,6 +124,22 @@ class AmsSimulator:
         await self.stop()
 
     @property
+    def write_commands(self) -> list[str]:
+        """Received commands that would CHANGE the device, as hex.
+
+        A query carries the 0xF5 marker; anything in the output (0x03) or input (0x02) groups
+        without it is a set. Lets a test assert that setup only ever reads -- which is design
+        decision D-05, and the difference between coexisting with another controller and
+        overwriting whatever it just did.
+        """
+        writes = []
+        for frame in self.received:
+            payload = bytes.fromhex(frame)[3:]
+            if payload[:1] in (b"", b"") and 0xF5 not in payload:
+                writes.append(frame)
+        return writes
+
+    @property
     def port(self) -> int:
         assert self._server is not None, "simulator not started"
         return self._server.sockets[0].getsockname()[1]
