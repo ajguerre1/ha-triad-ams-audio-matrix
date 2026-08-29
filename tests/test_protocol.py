@@ -150,6 +150,19 @@ class TestResponseParsing:
     def test_a_trailing_dollar_sign_some_firmware_appends_is_tolerated(self) -> None:
         assert p.parse_audio_sense("AudioSense:Input[0]: 1 $") == (1, True)
 
+    def test_the_off_delay_is_hex_and_measured_in_minutes(self) -> None:
+        """Captured 2026-08-29. 0x1 is the 1-minute default the owner confirms, not one second.
+
+        Worth pinning because the Control4 driver initialises this field to 30, which on a
+        minutes scale is half an hour rather than half a minute.
+        """
+        assert p.parse_audio_sense_off_delay("Get Analog nosignal sleep timeout : 0x1") == 1
+        assert p.parse_audio_sense_off_delay("Get Analog nosignal sleep timeout : 0x1E") == 30
+
+    def test_audio_sense_enable_parses_both_words(self) -> None:
+        assert p.parse_audio_sense_enabled("Get AutoSenseEnable : Enable") is True
+        assert p.parse_audio_sense_enabled("Get AutoSenseEnable : Disable") is False
+
     def test_an_empty_group_is_reported_as_empty_not_as_a_failure(self) -> None:
         assert p.parse_group_membership("Group[A] is empty") == ("A", False)
 

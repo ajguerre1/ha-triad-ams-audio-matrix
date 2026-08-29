@@ -42,6 +42,10 @@ class MatrixSnapshot:
     audio_sense: dict[int, bool | None]
     #: Whether the matrix measures audio sense at all. ``None`` until first read.
     audio_sense_enabled: bool | None = None
+    #: Firmware version, read once per connection. Behaviour differs between revisions.
+    firmware: str | None = None
+    #: Minutes of silence before an analog input sleeps. Device unit is minutes.
+    audio_sense_off_delay: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -141,7 +145,30 @@ class TriadCoordinator(DataUpdateCoordinator[MatrixSnapshot]):
                 len(self.active_outputs),
             )
         sense, enabled = await self._read_audio_sense()
-        return MatrixSnapshot(outputs=snapshots, audio_sense=sense, audio_sense_enabled=enabled)
+        firmware, delay = await self._read_static()
+        return MatrixSnapshot(
+            outputs=snapshots,
+            audio_sense=sense,
+            audio_sense_enabled=enabled,
+            firmware=firmware,
+            audio_sense_off_delay=delay,
+        )
+
+    async def _read_static(self) -> tuple[str | None, int | None]:
+        """Read values that do not change while the session lasts, once.
+
+        Re-reading firmware every 30 seconds would be two wasted round trips per cycle forever.
+        Cached until a reconnect, which is also exactly when a firmware change could have happened.
+        """
+        if self.data and self.data.firmware is not None:
+            return self.data.firmware, self.data.audio_sense_off_delay
+        firmware = delay = None
+        try:
+            firmware = await self.client.firmware_version()
+            delay = await self.client.get_audio_sense_off_delay()
+        except (CommandError, ParseError) as err:
+            _LOGGER.debug("%s: diagnostics did not answer cleanly: %s", self.name, err)
+        return firmware, delay
 
     async def _read_audio_sense(self) -> tuple[dict[int, bool | None], bool | None]:
         """Read per-input audio sense, but only when an entity is consuming it.
@@ -191,6 +218,8 @@ class TriadCoordinator(DataUpdateCoordinator[MatrixSnapshot]):
                 outputs={**current.outputs, output: snapshot},
                 audio_sense=current.audio_sense,
                 audio_sense_enabled=current.audio_sense_enabled,
+                firmware=current.firmware,
+                audio_sense_off_delay=current.audio_sense_off_delay,
             )
         )
 

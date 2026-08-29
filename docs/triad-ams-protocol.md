@@ -164,6 +164,7 @@ Responses report **human units**, not the raw index: `Get Out[1] Band 1 Freq : 6
 | Audio-sense enable query | `FF 55 04 0A A2 F5 <in>` | `Get AutoSenseEnable : Disable` |
 | Audio-sense enable set | `FF 55 04 0A A2 <0\|1> FF` | echo |
 | Audio-sense off delay | `FF 55 04 0A A3 00 <delay>` | echo |
+| Off-delay query | `FF 55 04 0A A3 F5 00` | `Get Analog nosignal sleep timeout : 0x1` |
 
 Input gain is sent doubled (`value * 2`) per the Control4 driver.
 
@@ -175,12 +176,17 @@ Input gain is sent doubled (`value * 2`) per the Control4 driver.
 | `1` | Signal present |
 | `0` | No signal |
 
-`2` is the value the Control4 driver never documents, because it only ever tests for `1`. With
-the feature disabled — which is how all three matrices in the reference installation ship — every
-input answers `2` whether or not audio is flowing. Confirmed against an input carrying live music:
-it read `2`, stable over eight samples, identical to a dead input.
+`2` is the value the Control4 driver never documents, because it only ever tests for `1`. With the
+feature disabled, every input answers `2` whether or not audio is flowing — confirmed against an
+input carrying live music, which read `2` over eight samples, identical to a dead input.
 
-With sense enabled, the same input read `1` while an idle one read `0`.
+With sense enabled the values become a clean `0`/`1`, and `2` disappears entirely: a later sweep of
+all 56 inputs across three matrices with sense on returned only `0` and `1`. That is the strongest
+form of the evidence — the value is not a rare signal state, it is the absence of measurement.
+
+*(The reference installation originally shipped with sense disabled on all three matrices. It was
+enabled in the Control4 driver on 2026-08-29, which is the only place the setting survives a
+sync.)*
 
 #### Enabling audio sense returns a burst, not one frame
 
@@ -200,6 +206,22 @@ catching up. Every frame parsed cleanly. Only the index in each response reveale
 
 A client that sends this command must drain to a quiet socket afterwards, or verify the index in
 every response, or both.
+
+#### The off delay is in MINUTES, not seconds
+
+```
+FF 55 04 0A A3 F5 00     ->  Get Analog nosignal sleep timeout : 0x1
+FF 55 04 0A A3 00 <n>        set
+```
+
+The response names it for what it is: an *analog no-signal sleep timeout*. It reads back as a raw
+hex value, and **the unit is minutes** — hardware reporting `0x1` corresponds to the 1-minute
+default the owner confirms, not to one second.
+
+That matters for anyone reading the Control4 driver, which initialises
+`g_arielData.audioSenseOffDelay = 30`. On this scale that is **30 minutes**, not 30 seconds. The
+value is only pushed when an installer sets it, so a driver-side default of 30 does not
+necessarily reach the device — but it is not the half-minute the number suggests.
 
 #### It is a burst, not a broadcast
 

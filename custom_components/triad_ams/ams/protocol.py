@@ -243,6 +243,11 @@ def query_audio_sense(spec: MatrixSpec, source: int) -> bytes:
     return _frame(bytes([0x0A, 0xA0, 0xF5, spec.input_byte(source)]))
 
 
+def query_audio_sense_off_delay() -> bytes:
+    """How long the matrix waits on silence before sleeping an analog input. Minutes."""
+    return _frame(bytes([0x0A, 0xA3, 0xF5, 0x00]))
+
+
 def query_audio_sense_enabled() -> bytes:
     """Whether the matrix is measuring at all. Matrix-wide, not per input.
 
@@ -491,6 +496,17 @@ def parse_audio_sense(text: str) -> tuple[int, bool | None]:
     value = m.group(2)
     detected = {"1": True, "0": False}.get(value)
     return int(m.group(1)) + 1, detected
+
+
+def parse_audio_sense_off_delay(text: str) -> int:
+    """``Get Analog nosignal sleep timeout : 0x1`` -> ``1``.
+
+    The value is hex-formatted and the unit is **minutes**: hardware reporting ``0x1`` is the
+    1-minute default. The Control4 driver initialises this field to 30, which on this scale is
+    thirty minutes rather than the half-minute the number suggests.
+    """
+    m = _match(r"nosignal sleep timeout\s*:\s*(?:0x)?([0-9A-Fa-f]+)", text, "audio sense delay")
+    return int(m.group(1), 16)
 
 
 def parse_audio_sense_enabled(text: str) -> bool:
