@@ -75,6 +75,10 @@ class MatrixState:
     outputs: int = 8
     inputs: int = 8
     firmware: str = "V1.05.74"
+    #: Off on every matrix in the reference installation, which is why every input reads 2 there.
+    audio_sense_enabled: bool = False
+    #: Inputs with signal, 1-based. Only observable when audio_sense_enabled.
+    inputs_with_signal: set[int] = field(default_factory=set)
     channels: dict[int, OutputState] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
@@ -233,6 +237,20 @@ class AmsSimulator:
             return f"Get MAC Add {SIMULATOR_MAC}"
         if group == 0x01 and opcode == 0x01:
             return "Get Power status : Working"
+
+        if group == 0x0A and opcode == 0xA2:
+            if query:
+                word = "Enable" if self.state.audio_sense_enabled else "Disable"
+                return f"Get AutoSenseEnable : {word}"
+            return "Set AutoSenseEnable"
+
+        if group == 0x0A and opcode == 0xA0 and query:
+            source = rest[0] + 1
+            if not self.state.audio_sense_enabled:
+                # 2 is "not measuring", and it is what a live input reports too.
+                return f"AudioSense:Input[{rest[0]}]: 2"
+            value = 1 if source in self.state.inputs_with_signal else 0
+            return f"AudioSense:Input[{rest[0]}]: {value}"
 
         if group != 0x03:
             return "Command error"

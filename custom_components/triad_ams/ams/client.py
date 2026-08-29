@@ -247,6 +247,19 @@ class AmsClient:
         self._verify(index, output, "loudness")
         return value
 
+    async def get_audio_sense(self, source: int) -> bool | None:
+        """True/False when the matrix is measuring, None when audio sense is disabled."""
+        text = await self._exchange(p.query_audio_sense(self.spec, source))
+        index, detected = p.parse_audio_sense(text)
+        if index != source:
+            msg = f"asked input {source} for audio sense, device answered for input {index}"
+            raise ParseError(msg)
+        return detected
+
+    async def get_audio_sense_enabled(self) -> bool:
+        """Whether this matrix measures audio sense at all."""
+        return p.parse_audio_sense_enabled(await self._exchange(p.query_audio_sense_enabled()))
+
     async def get_mono(self, output: int) -> bool:
         text = await self._exchange(p.query_output_mono(self.spec, output))
         index, value = p.parse_output_mono(text)

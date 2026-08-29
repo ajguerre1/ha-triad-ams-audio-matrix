@@ -17,7 +17,7 @@ from .coordinator import TriadCoordinator
 
 _LOGGER = logging.getLogger(__name__)
 
-PLATFORMS: list[Platform] = [Platform.MEDIA_PLAYER]
+PLATFORMS: list[Platform] = [Platform.BINARY_SENSOR, Platform.MEDIA_PLAYER]
 
 type TriadConfigEntry = ConfigEntry[TriadCoordinator]
 
@@ -43,6 +43,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: TriadConfigEntry) -> boo
         hass,
         client,
         active_outputs=settings.active_outputs,
+        active_inputs=settings.active_inputs,
         scan_interval=settings.scan_interval,
         name=entry.title,
     )

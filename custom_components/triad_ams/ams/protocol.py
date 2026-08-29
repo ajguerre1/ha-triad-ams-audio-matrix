@@ -243,6 +243,17 @@ def query_audio_sense(spec: MatrixSpec, source: int) -> bytes:
     return _frame(bytes([0x0A, 0xA0, 0xF5, spec.input_byte(source)]))
 
 
+def query_audio_sense_enabled() -> bytes:
+    """Whether the matrix is measuring at all. Matrix-wide, not per input.
+
+    There is deliberately no setter here. Enabling audio sense returns a burst of roughly one
+    frame per input (C-09), and the Control4 driver re-asserts its own value on every sync -- so a
+    control exposed here would appear to work and silently revert. The durable setting lives in
+    the Control4 driver; this integration reports it and does not try to own it.
+    """
+    return _frame(bytes([0x0A, 0xA2, 0xF5, 0x00]))
+
+
 # -- groups ------------------------------------------------------------------------------------
 
 
@@ -457,15 +468,39 @@ def parse_input_gain(text: str) -> tuple[int, float]:
     return int(m.group(1)), float(m.group(2))
 
 
-def parse_audio_sense(text: str) -> tuple[int, bool]:
-    """``AudioSense:Input[0]: 1`` -> ``(1, True)``.
+def parse_audio_sense(text: str) -> tuple[int, bool | None]:
+    """``AudioSense:Input[0]: 1`` -> ``(1, True)``. Three-state, not boolean.
 
     The index is 0-based here and nowhere else, so it is converted to keep callers consistent.
-    Only ``1`` means detected: ``2`` has been observed on live hardware, is undocumented, and the
-    Control4 driver also treats anything other than 1 as stopped. Some firmware appends ``$``.
+    Some firmware appends a literal ``$``.
+
+    The value:
+
+    * ``1`` -- signal present
+    * ``0`` -- no signal
+    * anything else, in practice ``2`` -- **the matrix is not measuring**, because audio sense is
+      disabled. Measured 2026-08-29: an input carrying live music reports ``2`` identically to a
+      dead one.
+
+    ``2`` returns ``None`` rather than ``False`` deliberately. ``False`` would assert "there is no
+    audio", which the device has not determined and cannot; ``None`` says "no reading", which the
+    entity layer renders as unavailable. The Control4 driver collapses this to a boolean, which is
+    safe for it because it only ever acts on ``1``.
     """
     m = _match(r"AudioSense:Input\[(\d+)\]\s*:\s*(\d+)", text, "audio sense")
-    return int(m.group(1)) + 1, m.group(2) == "1"
+    value = m.group(2)
+    detected = {"1": True, "0": False}.get(value)
+    return int(m.group(1)) + 1, detected
+
+
+def parse_audio_sense_enabled(text: str) -> bool:
+    """``Get AutoSenseEnable : Disable`` -> ``False``.
+
+    Worth surfacing per matrix: when sense is off, every input entity goes unavailable at once,
+    and this is the thing that explains why.
+    """
+    m = _match(r"AutoSenseEnable\s*:\s*(\w+)", text, "audio sense enable")
+    return m.group(1).lower() in {"enable", "enabled", "on", "1"}
 
 
 def parse_group_membership(text: str) -> tuple[str, bool]:

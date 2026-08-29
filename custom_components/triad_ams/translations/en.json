@@ -47,5 +47,16 @@
         }
       }
     }
+  },
+  "entity": {
+    "binary_sensor": {
+      "audio_sense_enabled": {
+        "name": "Audio sense enabled",
+        "state": {
+          "off": "Not measuring",
+          "on": "Measuring"
+        }
+      }
+    }
   }
 }

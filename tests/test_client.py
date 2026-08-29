@@ -175,6 +175,48 @@ class TestFaults:
                 await client.firmware_version()
 
 
+class TestAudioSense:
+    async def test_a_matrix_that_is_not_measuring_reports_no_reading(self) -> None:
+        """Every matrix in the reference installation ships like this.
+
+        The device answers 2 for every input, and a live input is indistinguishable from a dead
+        one. None -- not False -- is the only honest answer.
+        """
+        async with AmsSimulator() as sim:
+            sim.state.audio_sense_enabled = False
+            sim.state.inputs_with_signal = {3}  # Signal present, but nothing is measuring it.
+            client = await _client(sim)
+            assert await client.get_audio_sense_enabled() is False
+            assert await client.get_audio_sense(3) is None
+            assert await client.get_audio_sense(4) is None
+            await client.disconnect()
+
+    async def test_with_measuring_enabled_signal_and_silence_are_distinguished(self) -> None:
+        async with AmsSimulator() as sim:
+            sim.state.audio_sense_enabled = True
+            sim.state.inputs_with_signal = {3, 7}
+            client = await _client(sim)
+            assert await client.get_audio_sense_enabled() is True
+            assert await client.get_audio_sense(3) is True
+            assert await client.get_audio_sense(7) is True
+            assert await client.get_audio_sense(4) is False
+            await client.disconnect()
+
+    async def test_an_answer_about_a_different_input_is_rejected(self) -> None:
+        """The same desync guard the outputs get. Audio sense prints a 0-based index, which is
+        the one place an off-by-one would look like a plausible reading rather than an error."""
+        async with AmsSimulator() as sim:
+            sim.state.audio_sense_enabled = True
+            client = await _client(sim)
+            await client.firmware_version()
+            sim.fail_next = Fault.BURST
+            with contextlib.suppress(TriadError):
+                await client.get_audio_sense(1)
+            # Whatever happened, later reads must be about the input actually asked for.
+            assert await client.get_audio_sense(4) is False
+            await client.disconnect()
+
+
 class TestConcurrency:
     async def test_commands_issued_together_are_serialised_onto_one_socket(self) -> None:
         """Two coroutines interleaving writes on one socket would mix up the answers.

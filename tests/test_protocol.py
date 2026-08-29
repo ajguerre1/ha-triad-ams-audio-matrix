@@ -133,13 +133,19 @@ class TestResponseParsing:
         assert p.parse_audio_sense("AudioSense:Input[0]: 1") == (1, True)
         assert p.parse_audio_sense("AudioSense:Input[3]: 0") == (4, False)
 
-    def test_an_undocumented_audio_sense_value_reads_as_not_detected(self) -> None:
-        """Value 2 was observed on live hardware with nothing playing and is undocumented.
+    def test_a_value_of_two_means_the_matrix_is_not_measuring_at_all(self) -> None:
+        """Measured 2026-08-29, and this is the deliberate change the old test was pinned against.
 
-        The Control4 driver tests only for 1, so anything else means 'not detected'. Pinned as a
-        test so that resolving the open question is a deliberate change, not an accident.
+        ``2`` is what the device reports when audio sense is DISABLED. It is not a signal state:
+        an input carrying live music reads 2 identically to a dead one. Mapping it to False would
+        assert "there is no audio", which the device has not determined and cannot -- so it
+        returns None, and the entity layer turns that into `unavailable`.
         """
-        assert p.parse_audio_sense("AudioSense:Input[0]: 2") == (1, False)
+        assert p.parse_audio_sense("AudioSense:Input[0]: 2") == (1, None)
+
+    def test_an_unknown_audio_sense_value_is_also_treated_as_not_measuring(self) -> None:
+        """Only 0 and 1 are known signal states; anything else is 'the device did not say'."""
+        assert p.parse_audio_sense("AudioSense:Input[0]: 7") == (1, None)
 
     def test_a_trailing_dollar_sign_some_firmware_appends_is_tolerated(self) -> None:
         assert p.parse_audio_sense("AudioSense:Input[0]: 1 $") == (1, True)

@@ -34,6 +34,17 @@ SHUTDOWN_TIMEOUT = 5.0
 
 
 @dataclass(frozen=True, slots=True)
+class MatrixSnapshot:
+    """What one poll learned, for the whole matrix."""
+
+    outputs: dict[int, OutputSnapshot]
+    #: Per-input audio sense. ``None`` for an input means the matrix is not measuring it.
+    audio_sense: dict[int, bool | None]
+    #: Whether the matrix measures audio sense at all. ``None`` until first read.
+    audio_sense_enabled: bool | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class OutputSnapshot:
     """What one poll learned about one output."""
 
@@ -47,8 +58,13 @@ class OutputSnapshot:
         return self.source is not None
 
 
-class TriadCoordinator(DataUpdateCoordinator[dict[int, OutputSnapshot]]):
-    """Reads the active outputs of one matrix on an interval."""
+class TriadCoordinator(DataUpdateCoordinator[MatrixSnapshot]):
+    """Reads one matrix on an interval.
+
+    Outputs are always polled. Inputs are polled only when something is listening -- see
+    :meth:`request_input_polling`. A 24-input matrix with no audio-sense entity enabled would
+    otherwise spend 24 extra round trips per cycle populating nothing.
+    """
 
     def __init__(
         self,
@@ -56,6 +72,7 @@ class TriadCoordinator(DataUpdateCoordinator[dict[int, OutputSnapshot]]):
         client: AmsClient,
         *,
         active_outputs: list[int],
+        active_inputs: list[int] | None = None,
         scan_interval: int,
         name: str,
     ) -> None:
@@ -67,9 +84,30 @@ class TriadCoordinator(DataUpdateCoordinator[dict[int, OutputSnapshot]]):
         )
         self.client = client
         self.active_outputs = active_outputs
+        self.active_inputs = active_inputs or []
+        #: Entities that want input data register here. Disabled entities are never added to Home
+        #: Assistant, so they never register, and an untouched platform costs nothing on the wire.
+        self._input_consumers = 0
 
-    async def _async_update_data(self) -> dict[int, OutputSnapshot]:
-        previous = self.data or {}
+    def request_input_polling(self) -> callable:
+        """Register a need for per-input data; returns an unsubscribe.
+
+        Called from an entity's ``async_added_to_hass``. Reference-counted so the last entity
+        being removed also stops the polling it caused.
+        """
+        self._input_consumers += 1
+
+        def _release() -> None:
+            self._input_consumers = max(0, self._input_consumers - 1)
+
+        return _release
+
+    @property
+    def polls_inputs(self) -> bool:
+        return self._input_consumers > 0
+
+    async def _async_update_data(self) -> MatrixSnapshot:
+        previous = (self.data.outputs if self.data else {}) or {}
         snapshots: dict[int, OutputSnapshot] = {}
         failures: list[int] = []
 
@@ -95,7 +133,30 @@ class TriadCoordinator(DataUpdateCoordinator[dict[int, OutputSnapshot]]):
                 len(failures),
                 len(self.active_outputs),
             )
-        return snapshots
+        sense, enabled = await self._read_audio_sense()
+        return MatrixSnapshot(outputs=snapshots, audio_sense=sense, audio_sense_enabled=enabled)
+
+    async def _read_audio_sense(self) -> tuple[dict[int, bool | None], bool | None]:
+        """Read per-input audio sense, but only when an entity is consuming it.
+
+        A failure here is never fatal: audio sense is a secondary signal, and losing it must not
+        take a matrix's zones offline.
+        """
+        if not self.polls_inputs:
+            return {}, (self.data.audio_sense_enabled if self.data else None)
+        try:
+            enabled = await self.client.get_audio_sense_enabled()
+        except (CommandError, ParseError) as err:
+            _LOGGER.debug("%s: could not read audio-sense enable: %s", self.name, err)
+            enabled = None
+        readings: dict[int, bool | None] = {}
+        for source in self.active_inputs:
+            try:
+                readings[source] = await self.client.get_audio_sense(source)
+            except (CommandError, ParseError) as err:
+                _LOGGER.debug("input %s audio sense did not answer cleanly: %s", source, err)
+                readings[source] = None
+        return readings, enabled
 
     async def _read_output(self, output: int) -> OutputSnapshot:
         return OutputSnapshot(
@@ -117,7 +178,14 @@ class TriadCoordinator(DataUpdateCoordinator[dict[int, OutputSnapshot]]):
             # transient read error as a failed user action that had in fact succeeded.
             _LOGGER.debug("could not re-read output %s after a command: %s", output, err)
             return
-        self.async_set_updated_data({**(self.data or {}), output: snapshot})
+        current = self.data or MatrixSnapshot(outputs={}, audio_sense={})
+        self.async_set_updated_data(
+            MatrixSnapshot(
+                outputs={**current.outputs, output: snapshot},
+                audio_sense=current.audio_sense,
+                audio_sense_enabled=current.audio_sense_enabled,
+            )
+        )
 
     async def async_shutdown(self) -> None:
         """Close the socket, but never let shutdown hang or raise.

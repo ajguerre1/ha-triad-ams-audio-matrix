@@ -106,6 +106,45 @@ is the one piece of coupling from entities back to the coordinator, and it is de
 alternative is either a slow poll for everyone or per-entity polling, which would break the
 single-socket serialisation guarantee.
 
+### Audio sense — designed from measurement, 2026-08-29
+
+The 2026-08-29 capture settled what the values mean, and one of them changes the entity design.
+
+| Device value | Meaning | Entity state |
+|---|---|---|
+| `1` | Signal present | `on` |
+| `0` | No signal | `off` |
+| `2` | **The matrix is not measuring** — audio sense is disabled | **`unavailable`** |
+
+**`2` must not map to `off`.** `off` asserts "there is no audio", which the device has not
+determined and cannot; an input carrying music reads `2` exactly like a dead one. `unavailable` is
+the honest state for "this sensor is not running", and it is also actionable — an entity that is
+unavailable prompts the question that leads to the setting, where a confident `off` does not.
+
+That makes the value a three-state, so `parse_audio_sense` returns `bool | None` rather than
+`bool`, and `None` propagates to `unavailable`.
+
+**A per-matrix diagnostic answers the obvious follow-up.** If 24 inputs go unavailable at once,
+the user needs to know why. A `binary_sensor` per matrix reporting whether audio sense is enabled
+supplies it directly, rather than leaving them to infer it.
+
+**Polling is per-input and tiered**, on the same principle as D-10: inputs are only polled when at
+least one audio-sense entity is enabled. Disabled entities are never added to Home Assistant, so
+they never register a need, and a setup with the platform untouched costs nothing on the wire.
+
+**The enable command is not exposed.** It would be a natural `switch`, and it is deliberately
+omitted:
+
+1. It returns a **burst of ~one frame per input** (C-09), which is a desync hazard on a
+   request/response client.
+2. **Control4 re-asserts the setting on every sync** — `SyncStateToDevice` ends with
+   `disableAudioSense(g_arielData.disableAudioSense)` — so a switch here would appear to work and
+   silently revert on the next reconnect or power-cycle. A control that lies about having worked
+   is worse than no control.
+
+The durable setting lives in the Control4 driver (`EX_CMD.SET_DISABLE_AUDIO_SENSE`). This
+integration therefore *reports* the state and does not try to own it.
+
 ## API Design
 
 ### `ams.protocol` — pure functions
