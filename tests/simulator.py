@@ -146,6 +146,13 @@ class AmsSimulator:
         #: per input", and a client that trusts the count rather than a quiet socket desyncs by
         #: exactly this number. Non-zero makes that mistake fail a test instead of shipping.
         self.burst_extra_frames = 0
+        #: Fail the next command whose hex starts with this prefix, then clear.
+        #:
+        #: ``fail_next`` always lands on whatever the client happens to send first, which for a
+        #: poll is an output query. The per-read failure branches deeper in the cycle -- input
+        #: gain, triggers, the audio-sense settings -- were unreachable without being able to
+        #: name the read to break.
+        self.fail_matching: str | None = None
         #: Every command received, as hex. Lets a test assert what went on the wire.
         self.received: list[str] = []
         #: Connections currently open. Real hardware accepts several; so does this.
@@ -279,6 +286,11 @@ class AmsSimulator:
 
     def _respond(self, payload: bytes) -> str:
         fault, self.fail_next = self.fail_next, None
+        if fault is None and self.fail_matching is not None:
+            header = bytes([0xFF, 0x55, len(payload)])
+            if (header + payload).hex().startswith(self.fail_matching.lower()):
+                self.fail_matching = None
+                return "Command error"
         if fault is Fault.EMPTY:
             return ""
         if fault is Fault.COMMAND_ERROR:

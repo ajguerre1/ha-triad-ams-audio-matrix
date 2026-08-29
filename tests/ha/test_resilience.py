@@ -161,3 +161,73 @@ class TestRefreshesBeforeTheFirstPoll:
         await coordinator.async_refresh_output_dsp(1)
         await coordinator._store_turn_on_volume(1)
         assert coordinator.data is None, "a refresh invented a snapshot from nothing"
+
+
+class TestEachReadFailsOnItsOwn:
+    """Every read in a poll cycle has its own swallow-and-continue branch.
+
+    ``fail_next`` always lands on whichever command the client sends first, which for a poll is an
+    output query -- so the branches deeper in the cycle needed a fault that could be aimed. Each
+    of these breaks exactly one read and asserts the poll still completes: a matrix must not go
+    unavailable because its trigger banks or its off delay answered badly once.
+    """
+
+    @pytest.mark.parametrize(
+        ("prefix", "what"),
+        [
+            ("ff550204f5", "input gain"),
+            ("ff55030550f5", "a trigger bank"),
+            ("ff55040aa2f5", "the audio-sense enable flag"),
+            ("ff55040aa3f5", "the audio-sense off delay"),
+            ("ff5503066500", "the firmware version"),
+            ("ff55030881f5", "the addressing mode"),
+            ("ff55040aa0f5", "an audio-sense input"),
+        ],
+    )
+    async def test_a_single_bad_read_does_not_fail_the_poll(
+        self, hass: HomeAssistant, simulator: AmsSimulator, prefix: str, what: str
+    ) -> None:
+        simulator.state.audio_sense_enabled = True
+        entry = await _setup(hass, simulator, enable=[SENSE_1, INPUT_GAIN, BANK_1])
+
+        simulator.fail_matching = prefix
+        await entry.runtime_data.async_refresh()
+        await hass.async_block_till_done()
+
+        assert hass.states.get(ZONE_1).state != STATE_UNAVAILABLE, (
+            f"the matrix went unavailable because {what} answered badly once"
+        )
+
+    async def test_a_bad_dsp_read_keeps_the_band_it_had(
+        self, hass: HomeAssistant, simulator: AmsSimulator
+    ) -> None:
+        """Stale beats blank: the previous curve is still what the zone is playing."""
+        entry = await _setup(hass, simulator, enable=[BASS_1])
+        simulator.fail_matching = "ff5504032ff5"  # the bass read for output 1
+        await entry.runtime_data.async_refresh()
+        await hass.async_block_till_done()
+        assert hass.states.get(BASS_1).state != STATE_UNAVAILABLE
+
+
+class TestTurnOnVolumeStorageFailing:
+    async def test_a_refused_store_is_swallowed(
+        self, hass: HomeAssistant, simulator: AmsSimulator
+    ) -> None:
+        """It is a follow-up to a write that already succeeded, so failing loudly would report a
+        volume change as broken when the volume did change."""
+        entry = await _setup(hass, simulator)
+        coordinator = entry.runtime_data
+        simulator.fail_matching = "ff5504033300"  # the turn-on write for output 1
+        await coordinator._store_turn_on_volume(1)
+        await hass.async_block_till_done()
+
+    async def test_it_re_reads_the_dsp_when_something_is_displaying_it(
+        self, hass: HomeAssistant, simulator: AmsSimulator
+    ) -> None:
+        """Only then. Re-reading for nobody would cost twenty round trips per volume change."""
+        entry = await _setup(hass, simulator, enable=[BASS_1])
+        coordinator = entry.runtime_data
+        assert coordinator.dsp_outputs == [1]
+        await coordinator._store_turn_on_volume(1)
+        await hass.async_block_till_done()
+        assert simulator.state.channels[1].turn_on_step >= 0
