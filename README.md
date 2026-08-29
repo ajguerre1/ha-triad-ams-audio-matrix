@@ -3,8 +3,9 @@
 Local control of **Triad TS-AMS8, TS-AMS16 and TS-AMS24** audio matrix switches over TCP, with no
 cloud, no polling of a vendor API, and no Control4 controller required.
 
-> **Status: in development.** The device client and protocol layer are implemented and tested;
-> the Home Assistant entity platforms are being built. Not yet ready to install.
+> **Status: in use.** Verified against live hardware — an AMS8 on firmware `V1.05.74` and two
+> AMS24s on `V1.06.84` — and driving them in a production Home Assistant instance. The test suite
+> is 341 tests over 1936 statements at 100% coverage, run against a device simulator in CI.
 
 ## What it exposes
 
@@ -14,15 +15,40 @@ it rather than just the parts a media player needs.
 | Platform | Per | What |
 |---|---|---|
 | `media_player` | output | Source select, volume, mute, on/off |
-| `number` | output | Bass, treble, balance, max volume, turn-on volume, 5-band parametric EQ |
+| `number` | output | Bass, treble, balance, EQ band gain ×5 |
 | `number` | input | Input gain |
-| `switch` | output | Loudness, mono-sum |
-| `switch` | matrix | 12 V trigger banks, ASG trigger |
-| `binary_sensor` | input | Audio sense |
-| `sensor` | matrix | Firmware version, connection state |
+| `number` | matrix | Audio-sense off delay |
+| `select` | output | EQ band frequency ×5, EQ band Q ×5 |
+| `switch` | output | Loudness, mono sum |
+| `switch` | matrix | 12 V trigger banks, ASG trigger, audio sense |
+| `binary_sensor` | input | Input audio |
+| `sensor` | matrix | Firmware, addressing |
+| `sensor` | output | Turn-on volume, when tracking is enabled |
+
+EQ frequency and Q are `select` rather than `number` because the device takes them as indices into
+fixed tables — 31 frequencies and 8 Q values — not as continuous quantities. Offering a slider
+would invent precision the hardware does not have.
 
 Everything beyond `media_player` is **disabled by default**. A 24×24 matrix would otherwise add
 several hundred entities to the recorder on first setup; enable the ones you need per zone.
+
+### Services
+
+| Service | Target | What |
+|---|---|---|
+| `triad_ams.set_eq_band` | `media_player` | Frequency, gain and Q of one band in a single write |
+| `triad_ams.apply_eq_preset` | `media_player` | All five bands at once — Flat, Rock, Pop, Jazz, Classical, High Pass, Low Pass |
+| `triad_ams.send_raw` | device | Send an arbitrary command; refuses anything without the `F5` query marker unless `allow_write` is set |
+
+`set_eq_band` exists because a band is three parameters across three entities. Setting them
+individually costs three round trips and leaves the filter in two intermediate shapes on the way.
+
+### Options
+
+Per-output **maximum volume** is a config option rather than an entity — a ceiling that a user can
+raise from a dashboard is not a ceiling. Also configurable: the poll interval, and whether the
+integration tracks turn-on volume the way a Control4 controller does (on by default; switching it
+off replaces the read-only `sensor` with a writable `number`).
 
 ## Requirements
 
@@ -58,6 +84,19 @@ The consequence to understand is that the matrix does **not** announce routing o
 If another controller changes a zone, this integration finds out on its next poll, not
 immediately. That is why the integration is `local_polling` and why the poll interval is
 configurable. Changes made *through* Home Assistant are read back straight away.
+
+### Replacing a Control4 controller
+
+Coexistence is the safe default, but the harder question is what you lose by switching the
+controller off. Read against the driver's Lua, Control4 maintains exactly three things beyond
+issuing commands: a debounce on routing, turn-on volume tracked as the volume a zone was left at,
+and a state resync that overwrites the device on every reconnect. The first two are reproduced
+here — a 250 ms leading-edge debounce on route changes, and optional turn-on volume tracking. The
+third is deliberately not: overwriting hardware state because a socket reconnected is a behaviour
+worth losing.
+
+This has not been verified with a controller actually powered down, only with one running
+alongside. If you are planning the same move, that is the gap to close yourself.
 
 ## Protocol
 
