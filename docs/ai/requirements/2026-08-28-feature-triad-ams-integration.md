@@ -1,7 +1,7 @@
 ---
 phase: requirements
 title: Requirements & Problem Understanding — Triad AMS Audio Matrix integration
-description: First-party Home Assistant integration for Triad TS-AMS8/16/24 audio matrices, replacing a third-party one in place
+description: First-party Home Assistant integration for Triad TS-AMS8/16/24 audio matrices — replaces a third-party integration in place, and replaces Control4 as the matrices' controller
 feature: triad-ams-integration
 status: accepted
 ---
@@ -28,6 +28,45 @@ Home Assistant cannot see or change it.
 **Current workaround.** Tone, EQ and grouping are set through Control4 or the unit's own web
 interface, outside Home Assistant entirely, and are therefore invisible to automation.
 
+### Reframed 2026-08-29 — replacement, not coexistence
+
+This document was written on the premise that Control4 stays. **It does not.** The owner's stated
+purpose for this integration is to **decommission Control4**, and the audio matrices are the
+workstream that has to complete before that can happen.
+
+That inverts the standard the integration is judged against. "Complete" no longer means *the
+device's command surface* — it means **everything Control4 does that would be missed**. Those are
+different lists, and the second is not a subset of the first: the matrices persist their own
+state, so most of what Control4 appears to provide is really the hardware. What Control4 actually
+maintains is small, and it is not made of commands.
+
+| What Control4 maintains that the matrix does not | Consequence of removing Control4 |
+|---|---|
+| **2.1 pairing** (`SyncPairedOutput`) — restored on driver init, re-applied on every master volume change | The paired zone's output 2 stops tracking output 1 |
+| **Turn-on volume tracking** — a C4 volume change schedules a 10 s debounced write of that volume into the device's turn-on register | Zones stop resuming at the volume they were left at |
+| **250 ms routing debounce** | Rapid source changes reach the matrix one-for-one |
+
+Two driver entry points, and they do different things — worth separating, because conflating them
+understates what Control4 owns:
+
+* **`OnDriverLateInit`** (driver start) writes exactly one thing to the hardware: the pairing
+  restore.
+* **`SyncStateToDevice`** (on *reconnect*) pushes a great deal — audio mode for every output, which
+  writes that output's EQ gains and bass/treble; routing for every output; every trigger bank; and
+  `disableAudioSense`.
+
+So Control4 does not merely read the matrix's persisted state — **on every reconnect it overwrites
+it** from its own cache. That is the mechanism behind C-01's coexistence hazard and behind the
+audio-sense revert that blocked FR-14: the setting is re-asserted by the driver, not by the device.
+
+Once Control4 is gone, the matrix's own persisted state becomes authoritative and nothing
+overrides it. Volume, routing, EQ, tone, triggers and input gain all live in the hardware and
+survive decommissioning untouched.
+
+**Scope boundary.** Control4 runs more than audio in this installation. This feature covers the
+audio matrices only; the wider decommissioning is tracked separately. *(Owner decision,
+2026-08-29.)*
+
 ## Goals & Objectives
 
 **Primary goals**
@@ -37,11 +76,23 @@ interface, outside Home Assistant entirely, and are therefore invisible to autom
   volume, 5-band EQ, loudness, mono-sum
 - Expose per-input gain and audio-sense
 - Expose the 12 V trigger banks and the ASG trigger
-- ~~Support the device's native output grouping~~ — **withdrawn during design review, 2026-08-28.**
-  The premise was wrong: all seven groups are empty on all three matrices, and the Control4 driver
-  never calls `setOutputToGroup`. Club BBQ's 2.1 is a driver-side construct the matrix has no
-  record of. See the design doc's "FR-07 grouping — withdrawn, on evidence"
+- ~~Support the device's native output grouping~~ — **withdrawn during design review, 2026-08-28;
+  re-examined and withdrawal upheld 2026-08-29.** The premise was wrong: all seven groups are empty
+  on all three matrices, and the Control4 driver never calls `setOutputToGroup`. The one 2.1 zone is a
+  driver-side construct the matrix has no record of. See the design doc's "FR-07 grouping —
+  withdrawn, on evidence", and "The 2.1 pairing after decommissioning" below
 - Install and update through HACS, configured entirely in the UI
+
+**Replacement goals** *(added 2026-08-29, when the framing changed)*
+
+| ID | Goal | Why it exists |
+|---|---|---|
+| FR-12 | Turn-on volume tracking — write the current volume into the device's turn-on register, debounced, behind a setting defaulting to **on** | Replaces the C4 behaviour that makes zones resume where they were left. Off by default would silently change how the house behaves on the day C4 is removed |
+| FR-13 | Debounce routing commands by 250 ms | Replaces C4's coalescing so rapid source changes do not reach the matrix one-for-one |
+| FR-14 | Audio-sense enable and off-delay setters | Only correct with a single writer. Under coexistence C4 re-asserted its own value, so an HA control would appear to work and silently revert |
+| FR-15 | Max volume as an entity | The device has a setter and **no getter**. With one writer, HA's stored value is authoritative — the missing query was the obstacle, not the missing setter |
+| FR-16 | EQ presets — the 7 generic curves plus user-defined slots | Flat is a genuine reset; user-defined slots carry whatever AV-19's audit produces |
+| FR-17 | `getIpAddress` as a diagnostic sensor | A read, useful for confirming a unit has not moved; closes A-03 |
 
 **Secondary goals**
 
@@ -57,8 +108,12 @@ interface, outside Home Assistant entirely, and are therefore invisible to autom
 | Discovery | The matrices speak SDDP, which Home Assistant does not |
 | Model auto-detection | No command reports the model or channel count; setup asks |
 | Submission to HACS default or HA core | Custom repository is sufficient for now |
-| Replacing Control4 | It stays live on all three matrices and is expected to keep changing them |
-| **Pushing cached state to the device on connect** | The Control4 driver does exactly this (`SyncStateToDevice` on every reconnect, writing every output). For a *second* controller it is destructive: a Home Assistant restart would overwrite whatever Control4 had just set, on all 56 outputs at once. This integration only ever reads on connect |
+| ~~Replacing Control4~~ | **Reversed 2026-08-29.** Replacing Control4 as the matrices' controller is now the *purpose*. See "Reframed" above |
+| **Pushing cached state to the device on connect** | The Control4 driver does exactly this (`SyncStateToDevice` on every reconnect, writing audio mode, routing, every trigger bank and the audio-sense setting). **The original reason no longer applies** — with a single writer it is no longer destructive to a second controller. It stays a non-goal on stronger grounds: the matrix persists its own state, so a push on connect can only overwrite the truth with a stale cache. This integration only ever reads on connect |
+| **Mirroring the 2.1 pairing** | Would mean shipping faithful support for a configuration AV-03 records as wrong — a synthesised sub channel feeding a full-range outdoor satellite, in a zone already flagged at 3 Ω against an 8 Ω minimum (AV-13). Handled with an HA-side link instead; see below |
+| **Audio mode (Bypass / Tone / EQ)** | Not a device feature. Control4 implements it by zeroing the inactive layer and holding the real values itself, which would mean Home Assistant keeping shadow copies of numbers the device also stores — two writers for one value. Home Assistant already has purpose-built storage for capture-and-restore: scenes. Documented as a recipe instead. *(Owner decision, 2026-08-29.)* |
+| **The 76 Triad speaker EQ presets** | Two independent reasons. They are tunings for Triad's own speakers, and this installation has **none** — every `Triad` reference in the A/V inventory is a matrix, and every speaker is another manufacturer's. And `ariel_presets.lua` is marked "Copyright 2022, Wirepath Home Systems, LLC. All rights reserved.", so republishing 76 curated tunings in a public MIT repository is redistributing their work product rather than documenting a protocol for interoperability. The 7 generic curves ship (FR-16); these do not |
+| **Network configuration, factory reset, network standby, firmware update** | Each can leave a matrix unreachable or unusable, and decommissioning makes none of them safer. Firmware decides it: the driver's bundled image is `v1.05.74` — exactly what the AMS8 runs, and *older* than the AMS24s' `v1.06.84` — so there is nothing to apply. Skipping these removes a button, not a capability: `send_raw` with `allow_write` remains for anyone who knows precisely what they are sending. *(Owner decision, 2026-08-29.)* |
 
 ## User Stories & Use Cases
 
@@ -69,9 +124,12 @@ interface, outside Home Assistant entirely, and are therefore invisible to autom
 - As the owner, I want the tone and EQ of a zone exposed, so that a correction can be applied
   from Home Assistant rather than through a separate tool.
 - As the owner, I want the integration to keep working while Control4 also controls the matrices,
-  so that adopting it is not a migration.
+  so that adopting it is not a migration. *(**Transitional**, 2026-08-29 — this holds only until
+  Control4 is decommissioned. It is a migration-window requirement, not a permanent one.)*
 - As the owner, I want to swap the existing integration for this one without rebuilding
   dashboards or automations, so that adoption costs an install and a restart.
+- As the owner, I want everything Control4 does for the matrices to be reachable from Home
+  Assistant, so that switching Control4 off costs me no capability I use today.
 
 **Key workflows**
 
@@ -94,11 +152,21 @@ interface, outside Home Assistant entirely, and are therefore invisible to autom
    what makes criteria 2 and 5 load-bearing rather than ceremonial.
 2. After cutover, the `triad_ams` entity count is unchanged, and sampled entity IDs keep their
    areas and aliases — verified against a baseline captured immediately before.
-3. A change made in Control4 appears in Home Assistant within one poll interval; a change made in
-   Home Assistant is visible to Control4.
+3. ~~A change made in Control4 appears in Home Assistant within one poll interval; a change made in
+   Home Assistant is visible to Control4.~~ — **transitional, 2026-08-29.** Verified once during the
+   migration window, then retired: after decommissioning there is no second controller to reconcile
+   with. Replaced by criteria 7-8 below.
 4. hassfest, HACS validation, ruff and pytest all pass in CI.
 5. Rollback to the previous integration is rehearsed and works.
 6. No site data — addresses, MACs, room, zone or source names — reaches the public repository.
+7. **Every capability Control4 provides for the matrices is reachable from Home Assistant, or is
+   recorded as a deliberate non-goal with a reason.** This is the decommissioning bar: the gap
+   analysis of 2026-08-29 enumerated the driver's full command and behaviour surface, and each item
+   is either a goal, a replacement goal (FR-12…FR-17), or a row in the non-goals table.
+8. **With Control4 stopped, no zone changes behaviour except the two accepted below** — the 2.1
+   zone's output 2 volume tracking, and turn-on volume if FR-12's setting is turned off. Verified by
+   stopping the Control4 driver and exercising every zone from Home Assistant before the hardware
+   is decommissioned, so the check is reversible.
 
 **Non-functional criteria** *(added during requirements review)*
 
@@ -108,13 +176,20 @@ interface, outside Home Assistant entirely, and are therefore invisible to autom
 | NFR-02 | Steady-state polling adds no measurable state-change churn when nothing is playing | This system's measured baseline is 4.48 events/s and `media_player` is already its 4th largest contributor. A poll that rewrites identical state 26 times a minute would be a regression in a place that is already watched | Sample churn before and after with the owner's existing `tools/ha_state_churn.py`, ≥300 s, like-for-like |
 | NFR-03 | An unreachable matrix degrades that matrix only | Three matrices share nothing but the LAN; one being down must not stall or fail the other two | Stop one simulator, assert the other coordinators keep updating |
 
+**The poll interval was paying for coexistence** *(2026-08-29)*. The 30 s default exists because
+Control4 mutates state behind Home Assistant's back, so reactivity to an external writer set the
+floor. With a single writer, state changes only when Home Assistant changes it, and the interval
+can lengthen considerably — which is the cheapest available win against NFR-02, and it arrives by
+deleting a constraint rather than by adding a mechanism. The specific default is a design-phase
+decision, not a requirement; what the requirement records is that its *justification* has gone.
+
 ## Constraints & Assumptions
 
 **Technical constraints**
 
 | ID | Constraint | Basis |
 |---|---|---|
-| C-01 | Must coexist with Control4 on the same matrix, concurrently | **Measured**: three simultaneous TCP clients answered correctly with Control4 connected |
+| C-01 | Must coexist with Control4 on the same matrix, concurrently — **transitional, 2026-08-29** | **Measured**: three simultaneous TCP clients answered correctly with Control4 connected. Binding only until decommissioning; kept because the migration window still needs it, and because it is what makes the cutover reversible. Retire it, do not delete it — it is the evidence that the transition was safe |
 | C-02 | Must be a drop-in replacement: same `triad_ams` domain, existing entity IDs preserved | Owner decision. **Stakes corrected 2026-08-29 by measurement** — see below |
 | C-03 | No site data in the repository | The repository is public and auto-pushes on commit |
 | C-04 | Frame framing must be learned per connection, not assumed | **Measured**: some firmware pads error frames to 150 bytes with NULs |
@@ -186,10 +261,34 @@ several decisions were argued.
 
 **Accepted behaviour change at cutover**
 
-Club BBQ's 2.1 pairing is implemented inside the Control4 driver, not in the matrix. After
+The one 2.1 zone's pairing is implemented inside the Control4 driver, not in the matrix. After
 cutover, setting that zone's volume from Home Assistant moves output 1 only; output 2 stays where
 it is. Under Control4 both move together. Accepted rather than mirrored, because AV-03 plans to
 undo the pairing and rewire the zone as true stereo. *(Owner decision, 2026-08-28.)*
+
+### The 2.1 pairing after decommissioning
+
+*(2026-08-29.)* The reasoning above assumed Control4 stays and the rewire lands first. Neither
+holds, so this was re-examined rather than left standing.
+
+**What decommissioning does for free.** AV-03's completion criterion includes "the pairing undone
+**in the Control4 driver**". Since the pairing exists only in that driver and the matrix holds no
+record of it, switching Control4 off satisfies that clause with no action.
+
+**What it does not fix.** AV-03's real remedy — rewiring as true stereo — is entangled with AV-13
+(the zone bridges at **3 Ω** against an 8 Ω minimum, and a naive three-per-side rewire would be
+2 Ω, worse) and therefore folded into the AV-19 audit. It will not land inside the migration
+window. So output 2 will sit as a low-passed mono satellite holding its last volume.
+
+**Why this is still not mirrored in the integration.** Building `SyncPairedOutput` would mean
+shipping faithful support for a configuration AV-03 records as a mistake: a *synthesised* sub
+channel — there is no subwoofer — feeding a full-range outdoor satellite, one of six in the
+zone. Encoding that into a public repository would make a local defect look like a product
+feature, and it would outlive the defect.
+
+**Remedy.** A Home Assistant script or automation links output 2's volume to output 1 with the
+`subVolOffset` trim. Restores the behaviour, costs no integration code, and is deleted when AV-03
+completes. Documented as a recipe. *(Owner decision, 2026-08-29.)*
 
 **Assumptions already retired by measurement**
 
@@ -217,12 +316,28 @@ against a measured system-wide churn baseline of 4.48 state-change events/s. *(O
 | Public or private repository? | Public, with an enumerating privacy guard |
 | Reuse the `triad_ams` domain? | Yes — drop-in replacement, entity IDs preserved |
 
+**Resolved during the 2026-08-29 replacement review**
+
+| Question | Answer |
+|---|---|
+| Is this integration the whole Control4 decommissioning, or one workstream? | One workstream — audio matrices only |
+| How soon does Control4 go? | Imminent — weeks. Build for a single writer |
+| Mirror the 2.1 zone's pairing, or not? | Not in the integration; an HA-side link, deleted when AV-03 lands |
+| Replicate turn-on volume tracking? | Yes, opt-in, **default on**, with the number entity read-only while tracking |
+| Which EQ presets ship? | The 7 generic ones plus user-defined slots; the 76 speaker curves excluded |
+| Network config, factory reset, standby, firmware? | Reads only — `getIpAddress` as a diagnostic. No risky writers |
+| Replicate the Bypass / Tone / EQ audio mode? | No — scenes already do capture-and-restore without shadow state |
+
 **Still open**
 
 | # | Item | Needs |
 |---|---|---|
-| 1 | Does an idle socket receive unsolicited audio-sense events? (A-01) | Hardware with a zone playing |
-| 2 | What does `AudioSense:Input[n]: 2` mean? (A-02) | Same |
+| 1 | Does an idle socket receive an audio-sense frame on a signal *transition*? (A-01) | A capture spanning audio actually starting or stopping. The 2026-08-29 window had music playing throughout, so the transition was never observed |
+| 2 | Can the Control4 driver be **stopped** without decommissioning the hardware? | Success criterion 8 wants the no-Control4 state exercised while rollback is still possible. If the driver cannot be stopped independently, that check has to move after the point of no return, which weakens it |
+| 3 | When does AV-19 produce measured curves for the installed speakers? | Sets whether FR-16's user-defined presets have anything to hold at launch, or stay empty for now |
 
-Neither blocks this phase. Both are recorded as named assumptions above and carried into the
-planning doc as an explicit task.
+~~2. What does `AudioSense:Input[n]: 2` mean? (A-02)~~ — resolved 2026-08-29: `2` means audio sense
+is disabled. See "What the 2026-08-29 capture changed".
+
+None of the three blocks the design phase. Item 2 is the one worth answering early, because it
+changes how criterion 8 is verified rather than merely when.

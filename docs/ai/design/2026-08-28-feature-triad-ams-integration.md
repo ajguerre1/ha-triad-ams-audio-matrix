@@ -263,7 +263,7 @@ and MAC**, since a diagnostics download is routinely pasted into public issue tr
 ### FR-07 grouping — withdrawn, on evidence
 
 FR-07 was written on a false premise. The requirement said the integration should support "the
-device's native 2.1 output grouping, which Club BBQ already uses". **Club BBQ does not use it.**
+device's native 2.1 output grouping, which one zone already uses". **That zone does not use it.**
 
 Two measurements, taken during this design review:
 
@@ -273,7 +273,7 @@ Two measurements, taken during this design review:
    `ariel_protocol.lua` and referenced nowhere in `driver.lua`. The device's group feature is
    entirely unused by the controller that configured this installation.
 
-What Club BBQ actually runs is `SyncPairedOutput` — a **driver-side** construct. It copies volume,
+What it actually runs is `SyncPairedOutput` — a **driver-side** construct. It copies volume,
 mute and loudness from a master output to a slave in the driver's own data model, forces mono-sum
 on the slave, and then sends ordinary per-output commands. Consistent with the reading: AMS8
 outputs 1 and 2 are both `mono` at an identical `-39.7`.
@@ -281,7 +281,7 @@ outputs 1 and 2 are both `mono` at an identical `-39.7`.
 **The matrix holds no record of the pairing.** It cannot be queried, so no integration can
 observe it.
 
-**Consequence for the cutover, and it is a behaviour change:** after cutover, setting Club BBQ's
+**Consequence for the cutover, and it is a behaviour change:** after cutover, setting that zone's
 volume from Home Assistant moves output 1 and leaves output 2 where it is. Under Control4 today
 both move together. This is recorded in the cutover runbook.
 

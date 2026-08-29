@@ -144,8 +144,8 @@ moves audio instantly and audibly.
 - [ ] Entity count and sampled entity IDs, areas and aliases unchanged after cutover (criterion 2)
 - [ ] A Control4 change appears within one poll; an HA change is visible to Control4 (criterion 3)
 - [ ] Rollback rehearsed (criterion 5)
-- [ ] **Club BBQ output 2 does not follow output 1 from HA** — expected, not a defect. The pairing
-      is Control4-side and the matrix has no record of it
+- [ ] **The 2.1 zone's output 2 does not follow output 1 from HA** — expected, not a defect. The
+      pairing is Control4-side and the matrix has no record of it
 - [x] **Capture with a zone playing, 2026-08-29** — settled A-02 (`2` = not measuring) and mostly
       A-01 (a passive socket saw nothing in 40 s). Surfaced C-09: enabling audio sense returns a
       burst of ~one frame per input

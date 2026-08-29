@@ -98,7 +98,7 @@ exit 0.**
 | Entity IDs change at cutover | Task 23 pins the format by test; `.storage` backed up; rollback symmetric |
 | A guessed write-response string rejects a successful command | D-04: writes discard their frame. No guessed strings anywhere |
 | Site data reaches the public repo | Guard enumerates every tracked file; denylist gitignored |
-| Club BBQ 2.1 behaves differently after cutover | Known, documented in the runbook, accepted by the owner |
+| The 2.1 zone behaves differently after cutover | Known, documented in the runbook, accepted by the owner |
 | HA-side tests cannot run locally at all | CI is the only evidence for Milestone 5; treat a green run as the gate |
 
 ## Progress summary
