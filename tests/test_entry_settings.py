@@ -120,3 +120,11 @@ class TestTurnOnVolumeTracking:
     def test_an_explicit_true_is_honoured(self) -> None:
         settings = EntrySettings.resolve({"model": "AMS8"}, {"track_turn_on_volume": True})
         assert settings.track_turn_on_volume is True
+
+
+def test_counts_that_disagree_with_the_model_win_over_it() -> None:
+    """An entry can name AMS8 and carry 24 channels; the counts are what the previous
+    integration actually used, so they are authoritative and the model name is a label."""
+    settings = EntrySettings.resolve({"model": "AMS8", "output_count": 24, "input_count": 24}, {})
+    assert (settings.spec.outputs, settings.spec.inputs) == (24, 24)
+    assert settings.spec.name == "AMS8"

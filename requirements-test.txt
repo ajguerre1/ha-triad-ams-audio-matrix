@@ -14,3 +14,4 @@ ruff>=0.7
 # is no transport dependency to declare here and manifest.json stays at requirements: [].
 
 pytest-homeassistant-custom-component>=0.13
+pytest-cov

@@ -58,3 +58,10 @@ class TestLookup:
         with pytest.raises(KeyError) as excinfo:
             presets.bands_for("Dubstep")
         assert "Rock" in str(excinfo.value)
+
+
+def test_a_preset_with_the_wrong_band_count_is_refused() -> None:
+    """The device has exactly five bands. Four would leave the fifth holding an unrelated
+    correction from whatever was applied before, which is worse than refusing outright."""
+    with pytest.raises(ValueError, match="exactly 5 bands"):
+        presets._preset((5, 0, 2), (11, 0, 2))

@@ -72,4 +72,6 @@ jobs:
       # Home Assistant cannot be imported on Windows, so the HA-dependent tests under tests/ha/
       # only run here. The ams/ client has no HA imports and runs everywhere.
       - run: pip install -r requirements-test.txt
-      - run: pytest tests/ -v
+      # Coverage is measured here rather than locally: the HA-dependent tests only run in CI,
+      # so a local figure understates ams/ by everything the entities exercise.
+      - run: pytest tests/ -v --cov=custom_components/triad_ams --cov-report=term-missing
