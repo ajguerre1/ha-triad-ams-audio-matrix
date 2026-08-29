@@ -83,16 +83,25 @@ class TestIdentity:
     async def test_entities_added_since_cannot_collide_with_the_frozen_output_format(
         self, hass: HomeAssistant, simulator: AmsSimulator
     ) -> None:
-        """Newer platforms namespace themselves, so they can never shadow an output entity."""
+        """No entity may take a unique_id that a media_player output already owns.
+
+        The invariant is *exact equality*, not the absence of a prefix. DSP entities are
+        deliberately named ``{entry_id}_output_{n}_{key}`` -- they extend the frozen format so
+        they sort next to the output they belong to, and the suffix is what makes a collision
+        impossible. An earlier version of this test banned the prefix outright and failed the
+        moment the EQ platform landed, which is a test describing an accident rather than a rule.
+        """
         entry = await _setup(hass, simulator)
         registry = er.async_get(hass)
-        others = [
-            e
-            for e in er.async_entries_for_config_entry(registry, entry.entry_id)
-            if e.domain != "media_player"
-        ]
-        assert others, "expected at least the audio-sense sensors"
-        assert not [e for e in others if "_output_" in e.unique_id]
+        entities = er.async_entries_for_config_entry(registry, entry.entry_id)
+        frozen = {f"{entry.entry_id}_output_{n}" for n in range(1, 9)}
+
+        players = {e.unique_id for e in entities if e.domain == "media_player"}
+        assert players == frozen
+
+        others = [e for e in entities if e.domain != "media_player"]
+        assert others, "expected the audio-sense, diagnostic and DSP entities"
+        assert not [e for e in others if e.unique_id in frozen]
 
     async def test_the_device_is_identified_by_the_config_entry_id(
         self, hass: HomeAssistant, simulator: AmsSimulator
