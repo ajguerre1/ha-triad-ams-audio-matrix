@@ -77,6 +77,15 @@ with acknowledgement: that some firmware pads response frames to 150 bytes with 
 desyncs a naive reader, and that the device returns empty frames intermittently on healthy
 connections and must not be disconnected when it does.
 
+## Trademarks
+
+**Triad** and the Triad logo are trademarks of their owner. This project is independent and is
+**not affiliated with, endorsed by, or supported by Triad**.
+
+The logo appears here only to identify which product the integration works with, which is what an
+integration icon is for in Home Assistant. The artwork remains the property of its owner.
+
 ## Licence
 
-MIT.
+MIT, covering the code in this repository. The licence does not extend to the Triad marks; see
+**Trademarks** above.

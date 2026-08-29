@@ -1,184 +1,193 @@
-"""Generate the HACS brand assets from Triad's mark.
+"""Generate the eight brand images from Triad's mark.
 
-Committed as a script rather than only as PNGs so the artwork is reviewable and reproducible -- a
-binary in a repo is a thing nobody can diff, and regenerating one by hand later means guessing at
-the sizes and colours.
+    python scripts/make_brand_assets.py
 
-## The mark
+## Why these files, and why eight
 
-Triad's logo is a Sierpinski triangle at one level of recursion, drawn in the negative:
+A custom integration's icon comes from ``custom_components/<domain>/brand/`` -- since Home
+Assistant 2026.3 the frontend fetches it through ``/api/brands/integration/{domain}/{image}``, and
+a local ``brand/`` directory takes priority over the brands CDN. Nothing is submitted anywhere;
+``home-assistant/brands`` explicitly refuses pull requests for custom components, so a 404 from
+``brands.home-assistant.io`` is normal and means nothing.
 
-    * the top sub-triangle is solid
-    * the two lower sub-triangles are rendered as horizontal bands
-    * the central inverted sub-triangle is background, so it reads as a wedge narrowing to a point
-      at the bottom centre
+Home Assistant asks for ``icon``, ``logo``, their ``@2x`` variants, and a ``dark_`` prefixed
+version of each, choosing the ``dark_`` one on a dark theme. The ``dark_`` files are purely
+additive -- ``dark_icon.png`` falls back to ``icon.png`` -- which is exactly what this integration
+was relying on before, and why the icon rendered as a **black tile on a light theme**.
 
-Everything is derived from the outer triangle's three corners, so the proportions hold at any
-size. Each asset is *drawn* at its own size rather than resampled from one master -- the bands are
-thin enough that a downscale turns them to grey mush.
+## What was wrong before
 
-## Assets
+The previous version of this script *drew* an approximation of the mark onto a solid black
+canvas. Two problems, and the second is the one that showed:
 
-Home Assistant's brands convention:
+* It was an approximation. The real mark is right here; reproducing it by eye is work spent to be
+  less accurate.
+* **The background was opaque.** An integration icon is composited onto whatever card Home
+  Assistant puts behind it, so a black tile reads as a placeholder on a light theme rather than as
+  a logo.
 
-    icon.png     256x256   the mark alone -- what the integrations list shows
-    icon@2x.png  512x512
-    logo.png     512x256   mark plus the TRIAD wordmark
-    logo@2x.png  1024x512
+## Keying, not drawing
 
-The wordmark needs a font, and fonts are not portable. A list of candidates is tried in order and
-the first that exists wins; if none do, the logo is skipped rather than rendered in PIL's bitmap
-default, which would look nothing like the original. The icons never need a font, so the assets
-that matter always generate.
+Every pixel far enough from the artwork's own corner colour is ink; everything else becomes
+transparent. The background colour is read from a corner rather than assumed.
 
-Run:  python scripts/make_brand_assets.py
+**The knockout stays a knockout.** The inverted triangle at the centre of the mark is not painted
+-- it is the page showing through -- so keying leaves it transparent and it takes the colour of
+whatever sits behind it. Filling it black would be wrong on a light theme for the same reason the
+old opaque background was.
+
+## One source, two polarities
+
+Triad publish the mark white-on-black only, so unlike an artwork published both ways the light
+variant has to be made: the ink is recoloured, the geometry is untouched. White ink for a dark
+theme, near-black for a light one, both on transparency.
+
+## Resizing: coverage only
+
+The sibling AVPro integration premultiplies by alpha before resizing, because its artwork carries
+real colour that Lanczos would otherwise average against transparent black and fringe every glyph
+in grey. **That does not apply here.** This mark is a single flat ink, so only *coverage* is
+interpolated and the colour is painted through it afterwards -- there is no colour to bleed and no
+premultiply/divide round trip to do.
+
+The clamp still matters. Lanczos overshoots, and an alpha above 255 or below 0 wraps when cast.
+
+Pillow and NumPy are development dependencies only. They are used here and nowhere in the
+integration, and ``manifest.json`` stays at ``requirements: []``.
 """
 
 from __future__ import annotations
 
-import pathlib
+from pathlib import Path
 
-from PIL import Image, ImageDraw, ImageFont
+import numpy as np
+from PIL import Image
 
-ROOT = pathlib.Path(__file__).resolve().parents[1]
-OUT_DIR = ROOT / "custom_components" / "triad_ams" / "brand"
+REPO_ROOT = Path(__file__).resolve().parents[1]
+SOURCE = REPO_ROOT / "assets" / "triad.jpg"
+BRAND_DIR = REPO_ROOT / "custom_components" / "triad_ams" / "brand"
 
-#: The mark is white on black in Triad's own artwork, and a dark ground keeps it legible on both
-#: light and dark Home Assistant themes rather than vanishing into one of them.
-BACKGROUND = (0, 0, 0, 255)
-FOREGROUND = (255, 255, 255, 255)
+#: How far a pixel must sit from the artwork's own background before it counts as ink, summed
+#: across the channels. Comfortably above JPEG noise and far below the 765 that separates this
+#: artwork's black ground from its white ink.
+INK_DISTANCE = 90
 
-#: Horizontal bands filling each lower sub-triangle. Five reads as banded at 256px and still
-#: resolves at the 32px the integrations list uses.
-BANDS = 5
+#: Ink colour per variant. The empty prefix is the light theme, which needs dark ink; ``dark_`` is
+#: the dark theme, which keeps the artwork's own white.
+INK = {"": (17, 17, 17), "dark_": (255, 255, 255)}
 
-#: Fraction of each band's slot that is drawn, leaving the rest as the gap.
-BAND_DUTY = 0.62
-
-#: Tried in order; the first that exists is used for the wordmark.
-FONT_CANDIDATES = (
-    "C:/Windows/Fonts/arialbd.ttf",
-    "C:/Windows/Fonts/segoeuib.ttf",
-    "C:/Windows/Fonts/verdanab.ttf",
-    "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-    "/System/Library/Fonts/Helvetica.ttc",
-)
+#: Icon height, and the logo's. The brands specification asks for images "trimmed, so [they
+#: contain] the minimum amount of empty space", so the logo's width follows its aspect ratio
+#: rather than being padded to a fixed box.
+ICON_SIZE = 256
+LOGO_HEIGHT = 256
 
 
-def _lerp(a: tuple[float, float], b: tuple[float, float], t: float) -> tuple[float, float]:
-    return (a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t)
+def keyed(path: Path) -> np.ndarray:
+    """Load the artwork and return an alpha mask with the background removed."""
+    rgb = np.array(Image.open(path).convert("RGB")).astype(np.int16)
+    background = rgb[0, 0]
+    distance = np.abs(rgb - background).sum(axis=2)
+    return np.where(distance > INK_DISTANCE, 255, 0).astype(np.uint8)
 
 
-def draw_mark(draw: ImageDraw.ImageDraw, apex, left, right) -> None:
-    """Draw the Triad triangle given the outer corners.
+def bounds(alpha: np.ndarray) -> tuple[int, int, int, int]:
+    """Inclusive bounding box of everything opaque."""
+    ys, xs = np.where(alpha > 0)
+    return int(xs.min()), int(ys.min()), int(xs.max()), int(ys.max())
 
-    The three sub-triangles come from the edge midpoints, which is what makes this a Sierpinski
-    subdivision rather than three shapes that happen to sit near each other.
+
+def wordmark_split(alpha: np.ndarray) -> int:
+    """The row separating the triangle from the TRIAD wordmark.
+
+    Found as the **widest** empty band rather than a fixed row: the mark's own horizontal bands
+    leave narrow gaps too, and picking the first one would cut the triangle in half. Measured on
+    this artwork the gaps between bands are 8 rows and this one is 25, so the two are not close.
     """
-    mid_left = _lerp(apex, left, 0.5)  # midpoint of the left edge
-    mid_right = _lerp(apex, right, 0.5)  # midpoint of the right edge
-    mid_base = _lerp(left, right, 0.5)  # midpoint of the base
+    left, top, right, bottom = bounds(alpha)
+    rows = (alpha[:, left : right + 1] > 0).sum(axis=1)
 
-    # Top sub-triangle: solid.
-    draw.polygon([apex, mid_left, mid_right], fill=FOREGROUND)
-
-    # Lower sub-triangles: horizontal bands. Each band is a trapezium clipped to the sub-triangle,
-    # so the left and right edges follow the slope instead of being cut square.
-    for corner, inner_top, inner_bottom in (
-        (left, mid_left, mid_base),  # bottom-left sub-triangle
-        (right, mid_right, mid_base),  # bottom-right sub-triangle
-    ):
-        for band in range(BANDS):
-            top_t = band / BANDS
-            bottom_t = (band + BAND_DUTY) / BANDS
-            # Outer edge runs mid -> corner; inner edge runs mid -> base midpoint.
-            outer_top = _lerp(inner_top, corner, top_t)
-            outer_bottom = _lerp(inner_top, corner, bottom_t)
-            inner_top_pt = _lerp(inner_top, inner_bottom, top_t)
-            inner_bottom_pt = _lerp(inner_top, inner_bottom, bottom_t)
-            draw.polygon([outer_top, inner_top_pt, inner_bottom_pt, outer_bottom], fill=FOREGROUND)
+    widest, start, best = 0, None, bottom
+    for y in range(top, bottom + 1):
+        if rows[y] == 0:
+            start = y if start is None else start
+        elif start is not None:
+            if (span := y - start) > widest:
+                widest, best = span, (start + y) // 2
+            start = None
+    return best
 
 
-def render_icon(size: int) -> Image.Image:
-    """The mark alone, on a square canvas."""
-    image = Image.new("RGBA", (size, size), BACKGROUND)
-    draw = ImageDraw.Draw(image)
+def resized(alpha: np.ndarray, box: tuple[int, int, int, int], size: tuple[int, int]) -> np.ndarray:
+    """Crop a coverage mask and scale it, without letting Lanczos ring the edges.
 
-    margin = size * 0.10
-    width = size - 2 * margin
-    # Equilateral: height is width * sqrt(3)/2, centred vertically.
-    height = width * 0.866
-    top = (size - height) / 2
-
-    draw_mark(
-        draw,
-        apex=(size / 2, top),
-        left=(margin, top + height),
-        right=(size - margin, top + height),
-    )
-    return image
+    Only coverage is interpolated here -- the ink is a flat colour applied afterwards -- so there
+    is no premultiply/divide round trip to do. The clamp still matters: Lanczos overshoots, and an
+    alpha above 255 or below 0 would wrap when cast.
+    """
+    left, top, right, bottom = box
+    crop = Image.fromarray(alpha[top : bottom + 1, left : right + 1], "L")
+    scaled = np.array(crop.resize(size, Image.LANCZOS)).astype(np.float64)
+    return np.clip(scaled, 0, 255).round().astype(np.uint8)
 
 
-def _load_font(pixel_size: int) -> ImageFont.FreeTypeFont | None:
-    for candidate in FONT_CANDIDATES:
-        if pathlib.Path(candidate).exists():
-            return ImageFont.truetype(candidate, pixel_size)
-    return None
+def inked(coverage: np.ndarray, colour: tuple[int, int, int]) -> Image.Image:
+    """Paint a flat ink colour through a coverage mask onto transparency."""
+    rgb = np.zeros((*coverage.shape, 3), dtype=np.uint8)
+    rgb[:] = colour
+    return Image.fromarray(np.dstack([rgb, coverage]), "RGBA")
 
 
-def render_logo(width: int, height: int) -> Image.Image | None:
-    """The mark above a letterspaced TRIAD wordmark, as in the original artwork."""
-    font = _load_font(round(height * 0.15))
-    if font is None:
-        return None
-
-    image = Image.new("RGBA", (width, height), BACKGROUND)
-    draw = ImageDraw.Draw(image)
-
-    mark_height = height * 0.60
-    mark_width = mark_height / 0.866
-    top = height * 0.10
-    draw_mark(
-        draw,
-        apex=(width / 2, top),
-        left=(width / 2 - mark_width / 2, top + mark_height),
-        right=(width / 2 + mark_width / 2, top + mark_height),
-    )
-
-    # Letterspacing is what makes the wordmark read as Triad's rather than as plain bold caps,
-    # so the glyphs are placed individually instead of drawn as one string.
-    letters = "TRIAD"
-    tracking = height * 0.055
-    widths = [draw.textlength(ch, font=font) for ch in letters]
-    total = sum(widths) + tracking * (len(letters) - 1)
-    x = (width - total) / 2
-    y = top + mark_height + height * 0.10
-    for ch, w in zip(letters, widths, strict=True):
-        draw.text((x, y), ch, font=font, fill=FOREGROUND)
-        x += w + tracking
-    return image
+def centred(art: Image.Image, size: tuple[int, int]) -> Image.Image:
+    """Place art on a transparent canvas of the given size."""
+    canvas = Image.new("RGBA", size, (0, 0, 0, 0))
+    canvas.paste(art, ((size[0] - art.width) // 2, (size[1] - art.height) // 2), art)
+    return canvas
 
 
 def main() -> None:
-    OUT_DIR.mkdir(parents=True, exist_ok=True)
+    if not SOURCE.exists():
+        msg = f"{SOURCE} is missing; the brand images are generated from it"
+        raise SystemExit(msg)
+
+    alpha = keyed(SOURCE)
+    split = wordmark_split(alpha)
+
+    # The icon is the triangle alone; the logo is the triangle with the wordmark beneath it.
+    mark_box = bounds(alpha[:split])
+    logo_box = bounds(alpha)
+
+    mark_w = mark_box[2] - mark_box[0] + 1
+    mark_h = mark_box[3] - mark_box[1] + 1
+    logo_w = logo_box[2] - logo_box[0] + 1
+    logo_h = logo_box[3] - logo_box[1] + 1
+
+    BRAND_DIR.mkdir(parents=True, exist_ok=True)
     written = []
 
-    for name, size in (("icon.png", 256), ("icon@2x.png", 512)):
-        path = OUT_DIR / name
-        render_icon(size).save(path, "PNG", optimize=True)
-        written.append((name, f"{size}x{size}", path.stat().st_size))
+    for prefix, colour in INK.items():
+        for scale, suffix in ((1, ""), (2, "@2x")):
+            # Icon: the mark scaled to fit a square, keeping its equilateral proportions.
+            side = ICON_SIZE * scale
+            icon_w = round(side * mark_w / mark_h) if mark_w < mark_h else side
+            icon_h = side if mark_w < mark_h else round(side * mark_h / mark_w)
+            art = inked(resized(alpha, mark_box, (icon_w, icon_h)), colour)
+            path = BRAND_DIR / f"{prefix}icon{suffix}.png"
+            centred(art, (side, side)).save(path, "PNG", optimize=True)
+            written.append(path)
 
-    for name, (w, h) in (("logo.png", (512, 256)), ("logo@2x.png", (1024, 512))):
-        image = render_logo(w, h)
-        path = OUT_DIR / name
-        if image is None:
-            print(f"skipped {name}: no usable font found on this machine")
-            continue
-        image.save(path, "PNG", optimize=True)
-        written.append((name, f"{w}x{h}", path.stat().st_size))
+            # Logo: trimmed to its own aspect rather than padded into a box.
+            height = LOGO_HEIGHT * scale
+            width = round(height * logo_w / logo_h)
+            art = inked(resized(alpha, logo_box, (width, height)), colour)
+            path = BRAND_DIR / f"{prefix}logo{suffix}.png"
+            art.save(path, "PNG", optimize=True)
+            written.append(path)
 
-    for name, dims, size in written:
-        print(f"  {name:<14} {dims:<10} {size:>6} bytes")
+    print(f"{SOURCE.name}: mark {mark_w}x{mark_h}, logo {logo_w}x{logo_h}, split row {split}")
+    for path in sorted(written):
+        with Image.open(path) as im:
+            print(f"  {path.name:<18} {im.size!s:<12} {path.stat().st_size:>7} bytes")
 
 
 if __name__ == "__main__":
