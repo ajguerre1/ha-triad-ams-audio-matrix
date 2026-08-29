@@ -554,7 +554,16 @@ class TriadCoordinator(DataUpdateCoordinator[MatrixSnapshot]):
         try:
             await self.client.set_turn_on_volume_step(output, snapshot.volume_step)
         except (CommandError, ParseError, TransportError) as err:
-            _LOGGER.debug("could not store the turn-on volume for output %s: %s", output, err)
+            # Warning, not debug, and not a raise. Raising would report a volume change as broken
+            # when the volume did change -- this is a follow-up. But the consequence outlives the
+            # request: the zone keeps its old turn-on register and will come on at a volume nobody
+            # chose, with no entity showing that register by default. Silence made it unfindable.
+            _LOGGER.warning(
+                "could not store the turn-on volume for output %s: %s. That output will still "
+                "come on at its previous turn-on volume",
+                output,
+                err,
+            )
             return
         if output in self._dsp_consumers:
             # Something is displaying this value, so it has to be re-read to be believed.
