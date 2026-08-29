@@ -3,9 +3,13 @@
 Local control of **Triad TS-AMS8, TS-AMS16 and TS-AMS24** audio matrix switches over TCP, with no
 cloud, no polling of a vendor API, and no Control4 controller required.
 
-> **Status: in use.** Verified against live hardware — an AMS8 on firmware `V1.05.74` and two
+> **Status: 1.0, in use.** Verified against live hardware — an AMS8 on firmware `V1.05.74` and two
 > AMS24s on `V1.06.84` — and driving them in a production Home Assistant instance. The test suite
 > is 341 tests over 1936 statements at 100% coverage, run against a device simulator in CI.
+>
+> 1.0 waited on one thing: proving the Control4 controller could be taken out of the audio path
+> without losing anything. That was measured on 2026-08-29 across all 27 zones — see
+> [Replacing a Control4 controller](#replacing-a-control4-controller).
 
 ## What it exposes
 
