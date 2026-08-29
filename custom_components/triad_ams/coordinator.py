@@ -29,6 +29,9 @@ from .ams.errors import CommandError, ParseError, TransportError
 
 _LOGGER = logging.getLogger(__name__)
 
+#: How long to wait for the socket to close during unload. Home Assistant blocks on this.
+SHUTDOWN_TIMEOUT = 5.0
+
 
 @dataclass(frozen=True, slots=True)
 class OutputSnapshot:
@@ -117,6 +120,19 @@ class TriadCoordinator(DataUpdateCoordinator[dict[int, OutputSnapshot]]):
         self.async_set_updated_data({**(self.data or {}), output: snapshot})
 
     async def async_shutdown(self) -> None:
+        """Close the socket, but never let shutdown hang or raise.
+
+        ``asyncio.timeout`` is an *async* context manager; ``with`` raises TypeError at runtime,
+        which would make every unload and reload fail. Caught by the phase 7 design audit rather
+        than by a test, because the Home Assistant layer has no test coverage yet -- task 23.
+
+        A timeout here is not theoretical: ``disconnect`` awaits ``wait_closed``, and a socket to
+        a matrix that has stopped answering can sit there. Home Assistant is waiting on this, so
+        a slow close must not become a stuck reload.
+        """
         await super().async_shutdown()
-        with asyncio.timeout(5):
-            await self.client.disconnect()
+        try:
+            async with asyncio.timeout(SHUTDOWN_TIMEOUT):
+                await self.client.disconnect()
+        except (TimeoutError, OSError) as err:
+            _LOGGER.debug("%s did not close cleanly: %s", self.name, err)

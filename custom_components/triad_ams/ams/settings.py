@@ -32,6 +32,17 @@ _FALLBACK_MODEL = "AMS24"
 
 DEFAULT_SCAN_INTERVAL = 30
 
+# Option and data keys, defined here because this module is the only thing that interprets them.
+# ``const.py`` re-exports them for the config flow. They are frozen for drop-in compatibility
+# with the integration this one replaces -- renaming any of them orphans a live config entry.
+CONF_ACTIVE_OUTPUTS = "active_outputs"
+CONF_ACTIVE_INPUTS = "active_inputs"
+CONF_OUTPUT_MAX_VOLUMES = "output_max_volumes"
+CONF_SCAN_INTERVAL = "scan_interval"
+CONF_MODEL = "model"
+CONF_OUTPUT_COUNT = "output_count"
+CONF_INPUT_COUNT = "input_count"
+
 
 @dataclass(frozen=True, slots=True)
 class EntrySettings:
@@ -48,9 +59,9 @@ class EntrySettings:
         spec = cls._spec(data)
         return cls(
             spec=spec,
-            active_outputs=cls._active(data, options, "active_outputs", spec.outputs),
-            active_inputs=cls._active(data, options, "active_inputs", spec.inputs),
-            scan_interval=int(options.get("scan_interval") or DEFAULT_SCAN_INTERVAL),
+            active_outputs=cls._active(data, options, CONF_ACTIVE_OUTPUTS, spec.outputs),
+            active_inputs=cls._active(data, options, CONF_ACTIVE_INPUTS, spec.inputs),
+            scan_interval=int(options.get(CONF_SCAN_INTERVAL) or DEFAULT_SCAN_INTERVAL),
             _max_volumes=cls._caps(options),
         )
 
@@ -62,10 +73,10 @@ class EntrySettings:
         entry whose model name and counts disagree, and the counts are what the previous
         integration actually used.
         """
-        model = str(data.get("model") or _FALLBACK_MODEL)
+        model = str(data.get(CONF_MODEL) or _FALLBACK_MODEL)
         default = MODELS.get(model, MODELS[_FALLBACK_MODEL])
-        outputs = int(data.get("output_count") or default.outputs)
-        inputs = int(data.get("input_count") or default.inputs)
+        outputs = int(data.get(CONF_OUTPUT_COUNT) or default.outputs)
+        inputs = int(data.get(CONF_INPUT_COUNT) or default.inputs)
         if (outputs, inputs) == (default.outputs, default.inputs):
             return default
         return MatrixSpec(name=model, outputs=outputs, inputs=inputs)
@@ -93,7 +104,7 @@ class EntrySettings:
         ``"3"``. A stored 0 is clamped to 1: it would otherwise mute a zone permanently with
         nothing in the UI to explain why.
         """
-        stored = options.get("output_max_volumes") or {}
+        stored = options.get(CONF_OUTPUT_MAX_VOLUMES) or {}
         return {int(k): max(1, min(int(v), MAX_STEP)) for k, v in stored.items()}
 
     def max_volume(self, output: int) -> int:

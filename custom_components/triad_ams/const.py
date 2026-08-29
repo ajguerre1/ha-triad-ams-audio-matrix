@@ -21,23 +21,29 @@ DEFAULT_NAME: Final = "Triad AMS"
 #: and the indices derived from them cannot drift apart.
 
 # -- config entry data keys. Frozen for drop-in compatibility; see the module docstring. -------
+#
+# The keys that ``ams/settings.py`` interprets are re-exported from there rather than restated
+# here. Two copies of a key string is the same drift hazard as two copies of a constant, and this
+# module had just removed one of those.
+from .ams.settings import (  # noqa: E402
+    CONF_ACTIVE_INPUTS,
+    CONF_ACTIVE_OUTPUTS,
+    CONF_INPUT_COUNT,
+    CONF_MODEL,
+    CONF_OUTPUT_COUNT,
+    CONF_OUTPUT_MAX_VOLUMES,
+    CONF_SCAN_INTERVAL,
+    DEFAULT_SCAN_INTERVAL,
+)
+
 CONF_NAME: Final = "name"
 CONF_HOST: Final = "host"
 CONF_PORT: Final = "port"
-CONF_MODEL: Final = "model"
-CONF_INPUT_COUNT: Final = "input_count"
-CONF_OUTPUT_COUNT: Final = "output_count"
 
 # -- options keys, equally frozen --------------------------------------------------------------
-CONF_ACTIVE_INPUTS: Final = "active_inputs"
-CONF_ACTIVE_OUTPUTS: Final = "active_outputs"
+#: Carried by entries written by the integration this one replaces. Not yet consumed here, but
+#: preserved so that round-tripping the options through this integration does not discard it.
 CONF_INPUT_LINKS: Final = "input_links"
-CONF_OUTPUT_MAX_VOLUMES: Final = "output_max_volumes"
-
-#: New in this implementation, so it must have a default that reproduces the previous behaviour
-#: for an entry written by the integration being replaced.
-CONF_SCAN_INTERVAL: Final = "scan_interval"
-DEFAULT_SCAN_INTERVAL: Final = 30
 
 #: Percentage, as the options flow presents it. Equal to ``ams.volume.MAX_STEP`` by construction
 #: -- the device's step scale IS 0..100 -- and re-exported here only so the config flow does not
@@ -47,3 +53,24 @@ MAX_VOLUME_PERCENT: Final = 100
 #: Entity unique_ids are ``{entry_id}_output_{n}``. Changing this orphans every existing entity
 #: and silently recreates them with a ``_2`` suffix, breaking dashboards and automations.
 UNIQUE_ID_OUTPUT: Final = "{entry_id}_output_{number}"
+
+
+__all__ = [
+    "CONF_ACTIVE_INPUTS",
+    "CONF_ACTIVE_OUTPUTS",
+    "CONF_HOST",
+    "CONF_INPUT_COUNT",
+    "CONF_INPUT_LINKS",
+    "CONF_MODEL",
+    "CONF_NAME",
+    "CONF_OUTPUT_COUNT",
+    "CONF_OUTPUT_MAX_VOLUMES",
+    "CONF_PORT",
+    "CONF_SCAN_INTERVAL",
+    "DEFAULT_NAME",
+    "DEFAULT_PORT",
+    "DEFAULT_SCAN_INTERVAL",
+    "DOMAIN",
+    "MAX_VOLUME_PERCENT",
+    "UNIQUE_ID_OUTPUT",
+]

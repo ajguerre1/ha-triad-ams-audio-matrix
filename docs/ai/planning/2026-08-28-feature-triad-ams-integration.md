@@ -32,19 +32,28 @@ Branch `feature-triad-ams-integration`, no-worktree mode. Task tracing is **unav
 |---|---|---|---|
 | 7 | Integration core, config flow, `media_player` | FR-01, FR-09, C-02, C-07, D-06, D-07, D-08 | hassfest + HACS pass |
 
-## Milestone 3 — Design reconciliation ⏳ next
+## Milestone 3 — Design reconciliation ✅ tasks 8–11 done
 
-Phase 7 audits the code against the design; these are the deviations the design review already
-predicted. **Do these before adding platforms** — every new platform written against the current
-shape multiplies the eventual change.
+The deviations the design review predicted, fixed before more platforms were written against a
+shape that had to change.
 
-| # | Task | Traces to | Done when |
-|---|---|---|---|
-| 8 | Introduce `MatrixSpec`; stop threading `output_count`/`input_count` | D-09 | One spec argument replaces the pairs; `asg_index` defined once; test added |
-| 9 | Single `MAX_STEP`, owned by `volume.py` | Design "single source" | `protocol.py` imports it; no second definition |
-| 10 | Move `_channel_counts` / `_active_outputs` off `__init__.py` | Design "leaked internal" | `media_player.py` imports no private name from the package root |
-| 11 | Verify index mismatch raises `ParseError` | Test scenario | Test asserts a response naming another output is rejected |
-| 12 | **Phase 7 audit** — full code-vs-design pass | — | Every deviation listed, fixed or accepted in writing |
+| # | Task | Traces to | Status | Evidence |
+|---|---|---|---|---|
+| 8 | `MatrixSpec` replaces threaded counts | D-09 | **done** | 12 new tests; `asg_index` defined once; no `output_count=` remains outside a docstring |
+| 9 | Single `MAX_STEP`, owned by `volume.py` | Design "single source" | **done** | `grep '^MAX_STEP'` returns one definition |
+| 10 | `EntrySettings` replaces the private helpers | Design "leaked internal" | **done** | 14 new tests; no private import from the package root |
+| 11 | Index mismatch raises `ParseError` | Test scenario | **done** | Regression-verified: guard removed → fails, restored → passes |
+| 12 | **Phase 7 audit** — full code-vs-design pass | — | next | Every deviation listed, fixed or accepted in writing |
+
+**Scope added during the work.** Writing `EntrySettings` test-first surfaced four judgement calls
+that had been implicit in the code and are now explicit and tested: an empty active-channel list
+means "not chosen yet" rather than "none wanted"; volume caps can return from JSON keyed as either
+`str` or `int`; a stored cap of `0` must clamp rather than mute a zone permanently with nothing in
+the UI to explain it; and a channel number left over from a larger model must be dropped rather
+than become a permanently unavailable entity.
+
+Verification at the close of the milestone: **87 tests, ruff check and `ruff format --check` all
+exit 0.**
 
 ## Milestone 4 — Remaining platforms
 
@@ -103,10 +112,19 @@ Control4 driver — and it identified four structural deviations in code already
 Milestone 3 and they come first, because every platform added before them inherits the shape that
 has to change.
 
-**Next three actions:** task 8 (`MatrixSpec`), task 9 (single `MAX_STEP`), task 10 (move the
-private helpers off `__init__.py`). All three are internal refactors covered by the existing
-suite, so regressions surface immediately.
+Milestone 3 closed tasks 8–11: the code now matches the design, and 87 tests pass with ruff clean.
+The refactor was contained — no behaviour changed, and the existing suite caught every call site
+as it moved.
+
+**Next three actions:** task 12 (phase 7 audit — the remaining reconciliation step, which reads
+every file against the design rather than only the four predicted deviations), then task 13
+(tiered polling) and task 23 (`tests/ha/`). Task 13 gates every DSP platform, so it comes before
+tasks 14–18.
 
 **Riskiest area** is not the code: it is the cutover, because the two integrations cannot coexist
 and validation therefore happens after the swap. Task 23's `unique_id` test is the cheapest
 insurance available and should not be deferred.
+
+**Coordination note.** `tests/ha/` cannot run on the development box at all — Home Assistant does
+not import on Windows — so Milestone 5 is verifiable only through CI. Treat a green CI run as the
+gate rather than a local pass, and expect a slower loop there than the offline suite's six seconds.
