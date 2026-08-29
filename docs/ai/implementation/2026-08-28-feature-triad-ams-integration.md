@@ -25,7 +25,49 @@ Plan: [`../planning/2026-08-28-feature-triad-ams-integration.md`](../planning/20
 | `entity.py` | Identity and availability |
 | `media_player.py` | One entity per active output |
 | `config_flow.py`, `const.py`, `__init__.py` | Setup, options, keys |
-| `tests/simulator.py` | Fake matrix: both framings, faults, external mutation |
+| `tests/simulator.py` | Fake matrix: both framings, faults, external mutation, bursty replies |
+
+## Milestone 7 — Control4 replacement
+
+### Task 30 — bursty writes and the audio-sense setters (FR-14)
+
+| Changed | What |
+|---|---|
+| `ams/protocol.py` | `set_audio_sense_enabled`, `set_audio_sense_off_delay`, off-delay range constants |
+| `ams/client.py` | `send_bursty`, `set_audio_sense_enabled`, `set_audio_sense_off_delay`, `BURST_QUIET_TIMEOUT`, `MAX_BURST_FRAMES` |
+| `tests/simulator.py` | Enable command replies with a burst and applies state; `burst_extra_frames` |
+| `tests/test_protocol.py`, `tests/test_client.py` | 8 tests |
+
+**Two things the wire format carried that a reasonable guess would have got wrong.**
+
+The driver's function is `disableAudioSense(disabled)` and it writes **`1` when sense is
+enabled**. Naming and behaviour are opposites. Nothing catches the inversion — the device accepts
+either value and reports success — so the only symptom would be audio sense doing the reverse of
+what the switch says. Taken from the function body, and pinned by a test named after the trap.
+
+The enable command also always carries a trailing `0xFF` that the driver never explains. Copied
+rather than dropped: an unexplained constant that real firmware has always received is not a byte
+to omit merely because the reason was not written down.
+
+**The drain terminates on a quiet socket, never a frame count.** C-09 measured "roughly one frame
+per input" — and *roughly* is the whole point. A client reading exactly `spec.inputs` frames
+desyncs by the difference the moment firmware sends one more or fewer, and stays wrong for the life
+of the connection with every frame parsing cleanly. `MAX_BURST_FRAMES` is a runaway guard set far
+above any plausible burst; reaching it logs a warning rather than being a normal stopping point.
+The test that pins this makes the simulator send *more* frames than there are inputs, so the
+cheaper implementation fails it.
+
+**Framing state is forgotten after a burst.** The learned single-NUL heuristic draws conclusions
+from the padding after a lone reply; a frame inside a burst is not evidence about that, so the
+next ordinary exchange re-learns rather than trusting a reading taken under conditions that do not
+recur.
+
+**Deviation from design, accepted:** the design said the drain would reuse D-03's quiet-socket
+primitive. It uses a longer timeout instead (0.5 s against `DRAIN_TIMEOUT`'s 0.05 s) — the device
+is generating a frame per input rather than flushing a buffer it had already filled, so a gap
+between frames is not the end of the burst. This makes each enable/disable cost about half a
+second, which is acceptable for a configuration action and is why the off-delay setter
+deliberately does *not* use this path.
 
 ## Phase 7 audit — code against design
 

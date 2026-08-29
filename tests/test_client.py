@@ -232,3 +232,68 @@ class TestConcurrency:
             assert results == list(range(1, 9))
             assert sim.connections == 1, "the client must not open a socket per command"
             await client.disconnect()
+
+
+class TestBurstyWrites:
+    """FR-14. Enabling audio sense is answered by a burst, not by one frame (C-09).
+
+    Measured 2026-08-29: the surplus frames were read as answers to later queries and the probe
+    stayed desynchronised for ~19 exchanges. Every frame parsed cleanly; only the index revealed
+    the slip. These tests exist because that failure is silent in exactly the way that matters.
+    """
+
+    async def test_enabling_audio_sense_leaves_the_stream_aligned(self) -> None:
+        async with AmsSimulator(outputs=8, inputs=8) as sim:
+            for output in range(1, 9):
+                sim.mutate(output, source=output)
+            client = await _client(sim)
+            await client.firmware_version()
+
+            await client.set_audio_sense_enabled(enabled=True)
+
+            for output in range(1, 9):
+                assert await client.get_route(output) == output, (
+                    f"desynchronised at output {output} -- the burst was not fully drained"
+                )
+            await client.disconnect()
+
+    async def test_the_setting_actually_takes_effect(self) -> None:
+        async with AmsSimulator(inputs=8) as sim:
+            sim.state.audio_sense_enabled = False
+            client = await _client(sim)
+            await client.set_audio_sense_enabled(enabled=True)
+            assert await client.get_audio_sense_enabled() is True
+            await client.set_audio_sense_enabled(enabled=False)
+            assert await client.get_audio_sense_enabled() is False
+            await client.disconnect()
+
+    async def test_the_drain_ends_on_a_quiet_socket_not_on_an_expected_frame_count(self) -> None:
+        """The design decision this pins is worth more than the behaviour it checks.
+
+        C-09 measured "roughly one frame per input" -- roughly. A client that reads exactly
+        ``spec.inputs`` frames desyncs by the difference the moment firmware sends one more or one
+        fewer, and stays wrong for the life of the connection. Quiet-socket is the only terminator
+        that cannot be off by one.
+        """
+        async with AmsSimulator(outputs=8, inputs=8) as sim:
+            for output in range(1, 9):
+                sim.mutate(output, source=output)
+            sim.burst_extra_frames = 3  # Firmware sends more than one per input.
+            client = await _client(sim)
+            await client.firmware_version()
+
+            await client.set_audio_sense_enabled(enabled=True)
+
+            for output in range(1, 9):
+                assert await client.get_route(output) == output, (
+                    f"desynchronised at output {output} -- the drain assumed a frame count"
+                )
+            await client.disconnect()
+
+    async def test_the_off_delay_round_trips(self) -> None:
+        """An ordinary single-response write -- it must NOT go through the bursty path."""
+        async with AmsSimulator() as sim:
+            client = await _client(sim)
+            await client.set_audio_sense_off_delay(30)
+            assert await client.get_audio_sense_off_delay() == 30
+            await client.disconnect()

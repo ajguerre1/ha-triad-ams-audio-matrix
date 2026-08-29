@@ -45,6 +45,17 @@ DRAIN_TIMEOUT: Final = 0.05
 #: 24 outputs times several attributes makes it worth avoiding.
 CLEAN_EXCHANGES_TO_TRUST: Final = 3
 
+#: How long a bursty reply may stay quiet before it is considered finished. Longer than
+#: DRAIN_TIMEOUT because the device is generating a frame per input rather than flushing a buffer
+#: it had already filled, and a gap between frames is not the end of the burst.
+BURST_QUIET_TIMEOUT: Final = 0.5
+
+#: Ceiling on frames read from one burst. Not the terminator -- the quiet socket is. This exists
+#: so a device that never stops talking cannot hang the event loop forever, and it is set far
+#: above any plausible burst (one per input on a 24-input matrix) so it is never reached in
+#: normal operation. Reaching it is a fault worth logging, not a routine stopping point.
+MAX_BURST_FRAMES: Final = 256
+
 
 class AmsClient:
     """Talks to one matrix. Connects lazily and reconnects on transport failure."""
@@ -199,6 +210,70 @@ class AmsClient:
         text = await self._exchange(command)
         if p.is_command_error(text):
             raise CommandError(text or "empty response")
+
+    async def send_bursty(self, command: bytes) -> int:
+        """Send a command whose reply is a burst of frames, discard them all, return the byte count.
+
+        Exactly one command behaves this way: enabling audio sense answers with roughly one frame
+        per input (C-09). Sending it through :meth:`_write` reads the first frame as the answer and
+        leaves the rest buffered, where the next query collects them as its own -- a desync that
+        persists for as many exchanges as the burst was long, with every frame parsing cleanly.
+
+        **The terminator is a quiet socket, never a frame count.** C-09 measured "roughly one per
+        input", and roughly is the operative word: a client reading exactly ``spec.inputs`` frames
+        desyncs by the difference the moment firmware sends one more or one fewer, and stays wrong
+        for the life of the connection. :data:`MAX_BURST_FRAMES` is a runaway guard, not a
+        terminator.
+
+        A dedicated method rather than a flag on :meth:`_write`: this is the only command that
+        needs it, and a flag would put the half-second quiet wait in the hot path of every write.
+        """
+        drained = 0
+        async with self._lock:
+            await self.connect()
+            assert self._reader is not None and self._writer is not None
+            try:
+                await self._discard_stale()
+                self._writer.write(command)
+                await self._writer.drain()
+                for _ in range(MAX_BURST_FRAMES):
+                    try:
+                        raw = await asyncio.wait_for(
+                            self._reader.readuntil(p.FRAME_TERMINATOR), timeout=BURST_QUIET_TIMEOUT
+                        )
+                    except (TimeoutError, asyncio.IncompleteReadError):
+                        break  # Socket went quiet: the burst is over.
+                    drained += len(raw)
+                else:
+                    _LOGGER.warning(
+                        "%s:%s kept sending past %d frames; stopped draining",
+                        self.host,
+                        self.port,
+                        MAX_BURST_FRAMES,
+                    )
+            except OSError as err:
+                self._reset()
+                msg = f"{self.host}:{self.port} failed during a bursty write: {err}"
+                raise TransportError(msg) from err
+            # Whatever the framing heuristic had concluded, a burst is not evidence for it: the
+            # padding pattern of one frame in a stream of many says nothing about a lone reply.
+            # Forgetting makes the next ordinary exchange re-learn it rather than trust a reading
+            # taken under conditions that do not recur.
+            self._forget_framing()
+        _LOGGER.debug("drained %d byte(s) of burst from %s:%s", drained, self.host, self.port)
+        return drained
+
+    async def set_audio_sense_enabled(self, *, enabled: bool) -> None:
+        """Turn audio-sense measuring on or off for the whole matrix.
+
+        Only durable with a single controller. The Control4 driver re-asserted its own value on
+        every reconnect, which is why this was withheld until decommissioning (FR-14).
+        """
+        await self.send_bursty(p.set_audio_sense_enabled(enabled=enabled))
+
+    async def set_audio_sense_off_delay(self, minutes: int) -> None:
+        """Minutes of silence before an analog input sleeps. An ordinary single-response write."""
+        await self._write(p.set_audio_sense_off_delay(minutes))
 
     async def send_raw(self, command: bytes) -> str:
         """Send one arbitrary command and return the decoded response.

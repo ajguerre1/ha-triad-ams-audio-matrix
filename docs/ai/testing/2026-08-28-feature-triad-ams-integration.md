@@ -70,6 +70,22 @@ plausible-looking response text would make the tests agree with a misreading of 
 - [x] A response naming a different output than the one asked about raises `ParseError`
       (regression-verified: removing the guard fails the test)
 
+#### Bursty writes — FR-14, task 30
+
+- [x] **Enabling audio sense leaves the stream aligned** — every following query is answered about
+      what it asked. This is the C-09 failure: the surplus frames are read as answers to later
+      queries and every one parses cleanly, so only the index reveals it
+- [x] **The drain ends on a quiet socket, not on an expected frame count** — the simulator sends
+      more frames than there are inputs (`burst_extra_frames`), which is what C-09's "*roughly*
+      one per input" leaves room for. A client trusting the count desyncs by the difference and
+      stays wrong for the life of the connection
+- [x] The enable setting actually takes effect, both directions
+- [x] The off-delay setter round-trips and does **not** use the bursty path — it is an ordinary
+      single-response write, and routing it through the drain would cost half a second per call
+- [x] **`1` means enabled**, despite the driver's function being named `disableAudioSense(disabled)`
+      — an inversion nothing else would catch, since the device accepts either value and reports
+      success
+
 ### Privacy
 
 - [x] The audit enumerates a real set of files

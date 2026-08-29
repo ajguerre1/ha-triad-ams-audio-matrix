@@ -130,6 +130,10 @@ class AmsSimulator:
         )
         self.padding = padding
         self.fail_next: Fault | None = None
+        #: Frames the audio-sense burst sends *beyond* one per input. C-09 measured "roughly one
+        #: per input", and a client that trusts the count rather than a quiet socket desyncs by
+        #: exactly this number. Non-zero makes that mistake fail a test instead of shipping.
+        self.burst_extra_frames = 0
         #: Every command received, as hex. Lets a test assert what went on the wire.
         self.received: list[str] = []
         #: Connections currently open. Real hardware accepts several; so does this.
@@ -233,12 +237,28 @@ class AmsSimulator:
             writer.close()
 
     def _respond_frames(self, payload: bytes) -> list[str]:
-        """Frames to send for one command. Usually one; a burst fault sends many."""
+        """Frames to send for one command.
+
+        Usually one. Two cases send many, and they are different things:
+
+        * The **audio-sense enable command**, which real hardware answers with roughly one frame
+          per input (C-09). That is normal behaviour, not a fault, so it is modelled here rather
+          than behind ``fail_next`` -- a client is expected to handle it every time.
+        * The **BURST fault**, which injects the same shape onto a command that would never
+          produce it, so the desync guard can be tested without pretending the burst was expected.
+        """
         if self.fail_next is Fault.BURST:
             self.fail_next = None
-            # One frame per input, as the real enable command produces.
-            return [f"AudioSense:Input[{i}]: 0" for i in range(self.state.inputs)]
+            return self._burst_frames()
+        if _is_audio_sense_enable_set(payload):
+            self._dispatch(payload)  # Applies the state change; its single-frame ack is unused.
+            return self._burst_frames()
         return [self._respond(payload)]
+
+    def _burst_frames(self) -> list[str]:
+        """Roughly one frame per input. ``burst_extra_frames`` is what makes 'roughly' testable."""
+        count = self.state.inputs + self.burst_extra_frames
+        return [f"AudioSense:Input[{i % self.state.inputs}]: 0" for i in range(count)]
 
     def _respond(self, payload: bytes) -> str:
         fault, self.fail_next = self.fail_next, None
@@ -283,10 +303,18 @@ class AmsSimulator:
             if query:
                 word = "Enable" if self.state.audio_sense_enabled else "Disable"
                 return f"Get AutoSenseEnable : {word}"
+            # 1 enables. The driver's own function is named `disableAudioSense(disabled)` and
+            # writes 1 for *enabled*, so the inversion is modelled here too -- a double is only
+            # useful against this command if it agrees with the hardware, not with the name.
+            self.state.audio_sense_enabled = rest[0] == 0x01
             return "Set AutoSenseEnable"
 
-        if group == 0x0A and opcode == 0xA3 and query:
-            return f"Get Analog nosignal sleep timeout : 0x{self.state.audio_sense_off_delay:X}"
+        if group == 0x0A and opcode == 0xA3:
+            if query:
+                return f"Get Analog nosignal sleep timeout : 0x{self.state.audio_sense_off_delay:X}"
+            # Payload is 0A A3 00 <delay>, so the value sits after the 00 that replaces the marker.
+            self.state.audio_sense_off_delay = rest[1]
+            return "Set Analog nosignal sleep timeout"
 
         if group == 0x0A and opcode == 0xA0 and query:
             source = rest[0] + 1
@@ -449,3 +477,12 @@ def _rename_output(answer: str) -> str:
     Produces the shape a frame-boundary slip produces: valid text, correct format, wrong zone.
     """
     return re.sub(r"Out\[(\d+)\]", lambda m: f"Out[{int(m.group(1)) + 1}]", answer, count=1)
+
+
+def _is_audio_sense_enable_set(payload: bytes) -> bool:
+    """The one command whose reply is a burst rather than a single frame.
+
+    Its *query* form is an ordinary one-frame exchange, so the marker byte is what distinguishes
+    them -- matching on the opcode alone would make every read of the setting look bursty.
+    """
+    return len(payload) > 2 and payload[0] == 0x0A and payload[1] == 0xA2 and payload[2] != 0xF5

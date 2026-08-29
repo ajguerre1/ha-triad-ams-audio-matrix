@@ -207,3 +207,41 @@ class TestResponseParsing:
         """
         with pytest.raises(CommandError):
             p.parse_output_volume("")
+
+
+class TestAudioSenseSetters:
+    """FR-14. The wire format comes from `ariel_protocol.lua`, not from guesswork.
+
+    Both were reachable all along; they were withheld while Control4 re-asserted its own value on
+    every reconnect, which made a control that appeared to work and silently reverted.
+    """
+
+    def test_enabling_sends_one_not_zero_despite_the_drivers_function_name(self) -> None:
+        """The driver's function is `disableAudioSense(disabled)` and writes 1 for *enabled*.
+
+        Reading the name rather than the body is the obvious way to get this exactly backwards,
+        and the mistake is invisible: both values are accepted, and the device reports success
+        either way. Pinned here so the inversion cannot be reintroduced silently.
+        """
+        assert p.set_audio_sense_enabled(enabled=True) == bytes.fromhex("FF55040AA201FF")
+        assert p.set_audio_sense_enabled(enabled=False) == bytes.fromhex("FF55040AA200FF")
+
+    def test_the_trailing_ff_byte_is_sent_though_its_purpose_is_undocumented(self) -> None:
+        """The driver always packs 255 as the second argument and never explains why.
+
+        Copied rather than dropped: an unexplained constant that real firmware has always received
+        is not a byte to omit on the grounds that we cannot account for it.
+        """
+        assert p.set_audio_sense_enabled(enabled=True)[-1] == 0xFF
+
+    def test_the_off_delay_setter_mirrors_its_query_with_the_marker_replaced(self) -> None:
+        """Query is 0A A3 F5 00; the setter puts 00 where F5 was and the value after it."""
+        assert p.set_audio_sense_off_delay(1) == bytes.fromhex("FF55040AA30001")
+        assert p.set_audio_sense_off_delay(30) == bytes.fromhex("FF55040AA3001E")
+
+    def test_an_off_delay_outside_one_byte_is_refused_rather_than_truncated(self) -> None:
+        """The value is packed into a single byte. 256 would silently become 0 -- which reads as
+        'no delay' and is the opposite of what the caller asked for."""
+        for bad in (-1, 256):
+            with pytest.raises(ValueError):
+                p.set_audio_sense_off_delay(bad)

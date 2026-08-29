@@ -263,14 +263,48 @@ def query_audio_sense_off_delay() -> bytes:
 
 
 def query_audio_sense_enabled() -> bytes:
-    """Whether the matrix is measuring at all. Matrix-wide, not per input.
-
-    There is deliberately no setter here. Enabling audio sense returns a burst of roughly one
-    frame per input (C-09), and the Control4 driver re-asserts its own value on every sync -- so a
-    control exposed here would appear to work and silently revert. The durable setting lives in
-    the Control4 driver; this integration reports it and does not try to own it.
-    """
+    """Whether the matrix is measuring at all. Matrix-wide, not per input."""
     return _frame(bytes([0x0A, 0xA2, 0xF5, 0x00]))
+
+
+#: The off-delay is packed into one byte, and the device reads it as minutes.
+MIN_OFF_DELAY_MINUTES: Final = 0
+MAX_OFF_DELAY_MINUTES: Final = 255
+
+#: The driver always packs 255 as the second argument to the enable command and never says why.
+#: Copied rather than dropped -- an unexplained constant that real firmware has always been sent
+#: is not a byte to omit merely because the reason for it was not written down.
+_AUDIO_SENSE_ENABLE_TAIL: Final = 0xFF
+
+
+def set_audio_sense_enabled(*, enabled: bool) -> bytes:
+    """Turn the matrix's audio-sense measuring on or off.
+
+    **The value is inverted relative to the driver's function name.** ``ariel_protocol.lua`` calls
+    this ``disableAudioSense(disabled)`` and then writes ``1`` when sense is *enabled*. Reading the
+    name instead of the body gets this exactly backwards, and nothing catches it: the device
+    accepts either value and reports success, so the only symptom is that audio sense does the
+    opposite of what was asked.
+
+    **The reply is a burst**, roughly one frame per input (C-09) -- send this through
+    :meth:`~ams.client.AmsClient.send_bursty`, never the ordinary write path.
+    """
+    return _frame(bytes([0x0A, 0xA2, 0x01 if enabled else 0x00, _AUDIO_SENSE_ENABLE_TAIL]))
+
+
+def set_audio_sense_off_delay(minutes: int) -> bytes:
+    """How long the matrix tolerates silence before sleeping an analog input, in **minutes**.
+
+    Range-checked rather than masked. The value occupies one byte, so 256 would arrive as 0 --
+    which the device reads as no delay at all, the opposite of a long one, with nothing to
+    indicate the caller's number was not the one sent.
+    """
+    if not MIN_OFF_DELAY_MINUTES <= minutes <= MAX_OFF_DELAY_MINUTES:
+        msg = (
+            f"off delay {minutes} outside {MIN_OFF_DELAY_MINUTES}..{MAX_OFF_DELAY_MINUTES} minutes"
+        )
+        raise ValueError(msg)
+    return _frame(bytes([0x0A, 0xA3, 0x00, minutes]))
 
 
 # -- groups ------------------------------------------------------------------------------------
