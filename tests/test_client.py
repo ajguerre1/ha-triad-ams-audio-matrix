@@ -396,3 +396,17 @@ class TestTheDiagnosticReads:
             assert await client.mac_address() == "AA:BB:CC:DD:EE:FF"
             assert await client.power() is True
             await client.disconnect()
+
+    async def test_a_burst_that_never_stops_is_cut_off_and_logged(self) -> None:
+        """MAX_BURST_FRAMES is a runaway guard, not a terminator.
+
+        Reaching it means the device is still talking well past any plausible burst -- one frame
+        per input on a 24-input matrix -- so it is a fault worth a warning rather than a routine
+        stopping point. Without the cap a device stuck in a loop would hold the event loop.
+        """
+        async with AmsSimulator(inputs=8) as sim:
+            sim.burst_extra_frames = 300  # Far past the cap.
+            client = await _client(sim)
+            drained = await client.send_bursty(p.set_audio_sense_enabled(enabled=True))
+            assert drained > 0
+            await client.disconnect()

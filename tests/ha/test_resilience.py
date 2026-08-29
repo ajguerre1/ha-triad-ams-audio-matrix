@@ -291,3 +291,63 @@ class TestRefreshingWhileUnreachable:
         before = len(simulator.received)
         await entry.runtime_data._apply_pending_route(1)
         assert len(simulator.received) == before, "it sent a command with nothing pending"
+
+
+class TestTheLastFewBranches:
+    async def test_the_asg_trigger_failing_does_not_fail_the_poll(
+        self, hass: HomeAssistant, simulator: AmsSimulator
+    ) -> None:
+        """The ASG read sits after the banks and has its own branch. Its wire index is
+        model-dependent, so it is a different command from bank 1 rather than a repeat."""
+        entry = await _setup(hass, simulator, enable=[BANK_1])
+        asg_index = entry.runtime_data.client.spec.asg_index
+        simulator.fail_matching = f"ff55040550f5{asg_index:02x}"
+        await entry.runtime_data.async_refresh()
+        await hass.async_block_till_done()
+        assert hass.states.get(ZONE_1).state != STATE_UNAVAILABLE
+
+    async def test_the_off_delay_failing_on_a_forced_re_read(
+        self, hass: HomeAssistant, simulator: AmsSimulator
+    ) -> None:
+        """`force=True` is the path a write takes, and it is the only one that re-reads a value
+        the poll otherwise caches."""
+        entry = await _setup(hass, simulator, enable=[SENSE_1])
+        simulator.fail_matching = "ff55040aa3f500"
+        await entry.runtime_data.async_refresh_sense_settings()
+        await hass.async_block_till_done()
+        assert hass.states.get(ZONE_1).state != STATE_UNAVAILABLE
+
+    async def test_a_zone_reports_nothing_before_its_first_reading(
+        self, hass: HomeAssistant, simulator: AmsSimulator
+    ) -> None:
+        """Between setup and the first snapshot there is no state to report, and inventing one
+        would put a plausible default on a dashboard for a zone nothing has read."""
+        entry = await _setup(hass, simulator)
+        entity = hass.data["entity_components"]["media_player"].get_entity(ZONE_1)
+        entry.runtime_data.data = None
+        assert entity.source is None
+        assert entity.volume_level is None
+        assert entity.is_volume_muted is None
+
+    async def test_stepping_the_volume_without_a_reading_does_nothing(
+        self, hass: HomeAssistant, simulator: AmsSimulator
+    ) -> None:
+        """Volume up steps *from* the last reading. With no reading there is nothing to step from,
+        and guessing a starting point could jump a zone to any level."""
+        entry = await _setup(hass, simulator)
+        entity = hass.data["entity_components"]["media_player"].get_entity(ZONE_1)
+        entry.runtime_data.data = None
+        before = len(simulator.received)
+        await entity.async_volume_up()
+        assert len(simulator.received) == before, "it guessed a volume to step from"
+
+    async def test_an_entity_that_does_not_need_input_polling_says_so(
+        self, hass: HomeAssistant, simulator: AmsSimulator
+    ) -> None:
+        """The default. Input entities opt in by overriding it, so the base answer is what keeps a
+        matrix from polling every input for an entity that does not read them."""
+        from custom_components.triad_ams.entity import TriadInputEntity
+
+        entry = await _setup(hass, simulator)
+        base = TriadInputEntity(entry.runtime_data, entry, 1)
+        assert base.registers_input_polling() is False
