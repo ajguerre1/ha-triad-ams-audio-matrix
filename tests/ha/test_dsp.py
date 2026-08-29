@@ -330,3 +330,24 @@ class TestMaxVolumeReachesTheDevice:
         await hass.async_block_till_done()
         after_enable = sum(1 for f in simulator.received if f.startswith("ff55040aa2f5"))
         assert after_enable > enable_reads, "the enable flag stopped being polled"
+
+
+async def test_the_turn_on_volume_sensor_reports_the_device_value(
+    hass: HomeAssistant, simulator: AmsSimulator
+) -> None:
+    """Exists only while the integration owns the value. Offering it as something you can type
+    into would be offering a value that changes back, which is the confusion FR-12 ends."""
+    simulator.state.channels[1].turn_on_step = 40
+    await _setup(hass, simulator, enable=[TURN_ON_1])
+    assert hass.states.get(TURN_ON_1).state == "40"
+
+
+async def test_an_eq_gain_attribute_block_is_absent_before_the_band_is_read(
+    hass: HomeAssistant, simulator: AmsSimulator
+) -> None:
+    """Frequency and Q ride along as attributes on the gain entity. Before the DSP has been read
+    there is no band to describe, and inventing one would put a plausible default in the UI."""
+    entry = await _setup(hass, simulator, enable=[GAIN_1_B1])
+    entity = hass.data["entity_components"]["number"].get_entity(GAIN_1_B1)
+    entry.runtime_data.data = None  # As it is between setup and the first successful poll.
+    assert entity.extra_state_attributes is None

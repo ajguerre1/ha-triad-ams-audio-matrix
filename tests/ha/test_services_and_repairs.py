@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 from homeassistant.core import HomeAssistant
-from homeassistant.exceptions import ServiceValidationError
+from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import issue_registry as ir
@@ -281,3 +281,94 @@ class TestApplyEqPreset:
                 {"entity_id": "media_player.test_matrix_output_1", "preset": "Dubstep"},
                 blocking=True,
             )
+
+
+class TestSendRawRefusals:
+    async def test_a_device_id_that_does_not_exist(
+        self, hass: HomeAssistant, simulator: AmsSimulator
+    ) -> None:
+        await _setup(hass, simulator)
+        with pytest.raises(ServiceValidationError, match="no device with id"):
+            await hass.services.async_call(
+                DOMAIN,
+                "send_raw",
+                {"device_id": "not-a-real-device", "command": "FF5504031EF500"},
+                blocking=True,
+                return_response=True,
+            )
+
+    async def test_a_device_whose_entry_is_not_loaded(
+        self, hass: HomeAssistant, simulator: AmsSimulator
+    ) -> None:
+        """The device survives an unload; its runtime does not. Sending to it would reach for a
+        client that is no longer there."""
+        entry = await _setup(hass, simulator)
+        device_id = await self._device_id(hass, entry)
+        await hass.config_entries.async_unload(entry.entry_id)
+        await hass.async_block_till_done()
+
+        with pytest.raises(ServiceValidationError, match="not a loaded Triad AMS matrix"):
+            await hass.services.async_call(
+                DOMAIN,
+                "send_raw",
+                {"device_id": device_id, "command": "FF5504031EF500"},
+                blocking=True,
+                return_response=True,
+            )
+
+    async def test_a_matrix_that_stops_answering_mid_service(self, hass: HomeAssistant) -> None:
+        sim = AmsSimulator(outputs=8, inputs=8)
+        await sim.start()
+        entry = await _setup(hass, sim)
+        device_id = await self._device_id(hass, entry)
+        await sim.stop()
+
+        with pytest.raises(HomeAssistantError, match="did not answer"):
+            await hass.services.async_call(
+                DOMAIN,
+                "send_raw",
+                {"device_id": device_id, "command": "FF5504031EF500"},
+                blocking=True,
+                return_response=True,
+            )
+
+    @staticmethod
+    async def _device_id(hass: HomeAssistant, entry) -> str:
+        devices = dr.async_entries_for_config_entry(dr.async_get(hass), entry.entry_id)
+        return devices[0].id
+
+
+class TestTheRepairFlowGivingUp:
+    """Both aborts exist so the flow never reports a fix it did not make."""
+
+    async def test_a_matrix_that_is_no_longer_set_up(self, hass: HomeAssistant) -> None:
+        from custom_components.triad_ams.repairs import EnableAudioSenseFlow
+
+        flow = EnableAudioSenseFlow("an-entry-that-does-not-exist")
+        flow.hass = hass
+        result = await flow.async_step_confirm({})
+        assert result["type"] == "abort"
+        assert result["reason"] == "entry_unavailable"
+
+    async def test_a_matrix_that_refuses_the_command(self, hass: HomeAssistant) -> None:
+        from custom_components.triad_ams.repairs import EnableAudioSenseFlow
+
+        sim = AmsSimulator(outputs=8, inputs=8)
+        await sim.start()
+        entry = await _setup(hass, sim)
+        await sim.stop()  # Unreachable by the time the user presses the button.
+
+        flow = EnableAudioSenseFlow(entry.entry_id)
+        flow.hass = hass
+        result = await flow.async_step_confirm({})
+        assert result["type"] == "abort"
+        assert result["reason"] == "cannot_enable"
+
+    async def test_the_form_is_shown_before_it_is_confirmed(self, hass: HomeAssistant) -> None:
+        from custom_components.triad_ams.repairs import EnableAudioSenseFlow
+
+        flow = EnableAudioSenseFlow("whatever")
+        flow.hass = hass
+        result = await flow.async_step_init()
+        assert result["type"] == "form"
+        assert result["step_id"] == "confirm"
