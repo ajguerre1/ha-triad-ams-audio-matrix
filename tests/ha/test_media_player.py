@@ -227,10 +227,14 @@ class TestRoutingIsCoalesced:
         await _setup(hass, simulator)
         await _call(hass, SERVICE_SELECT_SOURCE, **{ATTR_INPUT_SOURCE: "Input 4"})
         await hass.async_block_till_done()
+        # Let the route debouncer's cooldown lapse. Without this the turn-off arrives inside it
+        # and is coalesced into a trailing run that has not fired yet, so the assertions below
+        # would fail because nothing was written -- not because something stale was read.
+        await _settle(hass)
 
         simulator.stale_reads_after_write = True
         await _call(hass, SERVICE_TURN_OFF)
         await hass.async_block_till_done()
 
-        assert simulator.state.channels[1].source is None
+        assert simulator.state.channels[1].source is None, "the write itself should have landed"
         assert hass.states.get(ENTITY).state == STATE_OFF
