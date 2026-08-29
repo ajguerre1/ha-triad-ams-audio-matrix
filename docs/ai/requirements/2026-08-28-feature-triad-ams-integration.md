@@ -71,17 +71,30 @@ audio matrices only; the wider decommissioning is tracked separately. *(Owner de
 
 **Primary goals**
 
-- Control routing, volume, mute and on/off per output through `media_player`
-- Expose the per-output DSP the hardware provides: bass, treble, balance, max volume, turn-on
-  volume, 5-band EQ, loudness, mono-sum
-- Expose per-input gain and audio-sense
-- Expose the 12 V trigger banks and the ASG trigger
-- ~~Support the device's native output grouping~~ — **withdrawn during design review, 2026-08-28;
-  re-examined and withdrawal upheld 2026-08-29.** The premise was wrong: all seven groups are empty
-  on all three matrices, and the Control4 driver never calls `setOutputToGroup`. The one 2.1 zone is a
-  driver-side construct the matrix has no record of. See the design doc's "FR-07 grouping —
-  withdrawn, on evidence", and "The 2.1 pairing after decommissioning" below
-- Install and update through HACS, configured entirely in the UI
+*The FR series is defined here and nowhere else* — the design doc's coverage table maps these to
+components, it does not define them. Numbering FR-01…FR-11 matches the identifiers that table has
+used since 2026-08-28, so nothing already written needs renumbering. *(Consolidated 2026-08-29,
+after a new requirement was numbered FR-08 and collided with an existing one.)*
+
+| ID | Goal |
+|---|---|
+| FR-01 | Routing, volume, mute and on/off per output through `media_player` |
+| FR-02 | Per-output tone — bass, treble, balance — and the 5-band parametric EQ |
+| FR-03 | Per-input gain |
+| FR-04 | Per-output loudness and mono-sum |
+| FR-05 | The 12 V trigger banks and the ASG trigger |
+| FR-06 | Audio-sense per input |
+| FR-07 | ~~The device's native output grouping~~ — **withdrawn** |
+| FR-08 | Firmware version and connection state, for diagnosis |
+| FR-09 | Configured entirely in the UI |
+| FR-10 | Install and update through HACS |
+| FR-11 | Services for direct routing and raw diagnostic commands |
+
+**FR-07 was withdrawn during design review, 2026-08-28; re-examined and the withdrawal upheld
+2026-08-29.** The premise was wrong: all seven groups are empty on all three matrices, and the
+Control4 driver never calls `setOutputToGroup`. The one 2.1 zone is a driver-side construct the
+matrix has no record of. See the design doc's "FR-07 grouping — withdrawn, on evidence", and "The
+2.1 pairing after decommissioning" below.
 
 **Replacement goals** *(added 2026-08-29, when the framing changed)*
 
@@ -90,14 +103,12 @@ audio matrices only; the wider decommissioning is tracked separately. *(Owner de
 | FR-12 | Turn-on volume tracking — write the current volume into the device's turn-on register, debounced, behind a setting defaulting to **on** | Replaces the C4 behaviour that makes zones resume where they were left. Off by default would silently change how the house behaves on the day C4 is removed |
 | FR-13 | Debounce routing commands by 250 ms | Replaces C4's coalescing so rapid source changes do not reach the matrix one-for-one |
 | FR-14 | Audio-sense enable and off-delay setters | Only correct with a single writer. Under coexistence C4 re-asserted its own value, so an HA control would appear to work and silently revert |
-| FR-15 | Max volume as an entity | The device has a setter and **no getter**. With one writer, HA's stored value is authoritative — the missing query was the obstacle, not the missing setter |
+| FR-15 | Max volume enforced by the device, not only by Home Assistant | The device has a setter and **no getter**. With one writer, HA's stored value is authoritative — the missing query was the obstacle, not the missing setter. *(Amended 2026-08-29 during design review: originally "as an entity". The value already lives in the `output_max_volumes` option, and a second home would be two sources of truth. It stays one setting, enforced in two places — the slider scale and the device's own register. See design D-14.)* |
 | FR-16 | EQ presets — the 7 generic curves plus user-defined slots | Flat is a genuine reset; user-defined slots carry whatever AV-19's audit produces |
 | FR-17 | `getIpAddress` as a diagnostic sensor | A read, useful for confirming a unit has not moved; closes A-03 |
 
-**Secondary goals**
+**Secondary goals** *(not numbered — these are qualities, not capabilities)*
 
-- Report firmware version and connection state for diagnosis
-- Provide services for direct routing and raw diagnostic commands
 - Document the protocol well enough that the next person does not have to rediscover it
 
 **Non-goals**

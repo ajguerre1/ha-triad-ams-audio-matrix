@@ -132,18 +132,123 @@ supplies it directly, rather than leaving them to infer it.
 least one audio-sense entity is enabled. Disabled entities are never added to Home Assistant, so
 they never register a need, and a setup with the platform untouched costs nothing on the wire.
 
-**The enable command is not exposed.** It would be a natural `switch`, and it is deliberately
-omitted:
+**The enable command — withheld under coexistence, exposed as FR-14.** *(Reversed 2026-08-29.)*
 
-1. It returns a **burst of ~one frame per input** (C-09), which is a desync hazard on a
-   request/response client.
-2. **Control4 re-asserts the setting on every sync** — `SyncStateToDevice` ends with
-   `disableAudioSense(g_arielData.disableAudioSense)` — so a switch here would appear to work and
-   silently revert on the next reconnect or power-cycle. A control that lies about having worked
-   is worse than no control.
+Two reasons were given for withholding it. The decisive one has gone:
 
-The durable setting lives in the Control4 driver (`EX_CMD.SET_DISABLE_AUDIO_SENSE`). This
-integration therefore *reports* the state and does not try to own it.
+1. ~~**Control4 re-asserts the setting on every sync**~~ — `SyncStateToDevice` ends with
+   `disableAudioSense(g_arielData.disableAudioSense)`, so a switch would appear to work and
+   silently revert on the next reconnect. **This was the real reason, and it dies with Control4.**
+   With a single writer the setting is durable, and a control that holds is a control worth having.
+2. It returns a **burst of ~one frame per input** (C-09). This survives — but it is a framing
+   problem with a known fix, not grounds for withholding a control.
+
+**Designing for the burst.** `AmsClient` gains an explicit bursty-write path: send, then read
+frames until the socket has been quiet for the drain timeout, and discard all of them.
+
+The count is *approximately* one per input, and **must not be assumed to be exactly that**. C-09
+measured "roughly one frame per input", and a client that reads exactly `spec.inputs` frames
+desyncs by one for as long as the connection lives if the firmware sends one more or one fewer.
+Quiet-socket is the only safe terminator, and it is the same primitive D-03's learned framing
+already relies on.
+
+This is the only command whose reply is a burst, so it is a **named method** (`send_bursty`)
+rather than a flag on the normal write path. A flag would put burst handling in the hot path of
+every write to serve one command — and would make the expensive quiet-socket wait the default.
+
+The off-delay setter, also FR-14, is an ordinary single-response write and needs none of this.
+
+**One consequence outside this layer.** The `audio_sense_disabled` repair issue currently tells the
+user to fix the setting in the Control4 driver, and warns that changing it on the device will not
+last. Both halves become wrong once Control4 is gone: the fix is the new switch, and the device
+value is now durable. `repairs.py` and `strings.json` must change with this, or the integration
+will be advising users to configure software they have removed.
+
+## Replacement design — FR-12…FR-17
+
+*(Added 2026-08-29.)* Three of these replace a Control4 behaviour that would otherwise be lost;
+three are unblocked by Control4's removal rather than caused by it.
+
+### FR-12 — turn-on volume tracking
+
+**The option decides which entity exists.** `track_turn_on_volume` per entry, default **on**.
+When on, a diagnostic `sensor` shows the value; when off, a writable `number` owns it.
+
+This replaces the phrasing carried out of requirements — "the entity is read-only while tracking"
+— which was a **synchronised flag**: a setting in one place silently changing an entity's
+behaviour in another. Home Assistant has no read-only `number` anyway, so it would have meant
+raising on write or swapping platforms. Entity presence following an option is a pattern
+`active_outputs` already uses, and the entry already reloads on options change.
+
+**Mechanism.** After a volume write settles, write that output's volume into the turn-on register.
+Per-output `Debouncer` at 10 s, matching the driver's `SetTurnOnVolume`.
+
+**Write the re-read value, not the value sent.** D-08 re-reads after every write because the device
+caps volume against its own max-volume register. Storing the *sent* step would persist a volume the
+device never adopted — precisely the error D-08 exists to prevent, and it would surface a fortnight
+later as a zone that turns on louder than it can go.
+
+### FR-13 — routing debounce
+
+Per-output `homeassistant.helpers.debounce.Debouncer`, `immediate=False`, cooldown 0.25 s,
+wrapping the write **and its re-read**.
+
+**It must wrap the pair, not sit inside `AmsClient.set_route`.** A debounce in the client returns
+before the write reaches the device, so D-08's re-read would read state the write had not yet
+changed — a silent inversion of the ordering D-08 depends on.
+
+**Honest scope:** this is worth less here than in Control4. C4's UI can emit a route command per
+scroll step; Home Assistant's `select_source` is a discrete selection. This is insurance against a
+looping automation, not a fix for observed behaviour. Recorded so nobody later mistakes it for
+evidence of a problem that was measured.
+
+### FR-15 — max volume enforcement *(amended during design review)*
+
+FR-15 asked for "max volume as an entity". **The value already has a home** — the
+`output_max_volumes` option — and a second one would be two sources of truth for one setting. So
+no new entity.
+
+Instead the existing option is projected onto **two enforcement points**:
+
+| Point | Effect | Status |
+|---|---|---|
+| `media_player` slider scale (`_max_step`) | The cap is the top of the slider | Already built |
+| The device's own max-volume register | Hardware refuses to exceed it regardless of sender | New |
+
+**Written on change only, never on connect.** D-05 forbids pushing cached state on connect because
+it overwrites device truth with a stale cache. Max volume has no *readable* device truth, so
+there is nothing to overwrite and the rule does not engage — but writing it on connect would still
+be pushing cached state, so the narrower rule stands.
+
+**Accepted gap:** the register cannot be read, so after a factory reset the device and the stored
+option diverge with nothing to detect it.
+
+### FR-16 — EQ presets
+
+`ams/presets.py` holds the 7 generic curves as band tuples — pure data, no Home Assistant import,
+unit-testable on Windows like the rest of `ams/`.
+
+Applied by an entity service **`apply_eq_preset` on `media_player`**, not on the EQ entities. A
+preset is an output-level operation, and `media_player` is the only entity guaranteed to exist for
+an output — every DSP entity is disabled by default, so a service hosted on one would be
+unavailable in the default configuration.
+
+**No preset-state entity.** The device stores band values, not a preset identifier. "Current
+preset" is derivable by matching five bands against the table, but only when DSP polling is active
+for that output, and it is fabricated otherwise. A service is an *action*; actions do not need
+state.
+
+**User-defined presets are scripts** that call this service or `set_eq_band`. Home Assistant's own
+storage answers the storage question, consistent with the same reasoning applied to audio mode
+(scenes) and the 2.1 link (an automation).
+
+### FR-17 — IP address diagnostic
+
+`protocol.query_ip_address` plus a diagnostic `sensor`, disabled by default like every entity
+outside `media_player`.
+
+**It must be redacted in diagnostics** alongside the host and MAC. It is the same class of data,
+and a diagnostics download is routinely pasted into public issue trackers.
 
 ## API Design
 
@@ -220,19 +325,24 @@ cycle risk as platforms multiply. They belong on the entry-derived config object
 | D-02 | One serialised socket per matrix | Connection per command; connection pool | The device has no message IDs, so concurrent commands cannot be matched to answers. Per-command connections also add a handshake to all ~72 round trips of a poll |
 | D-03 | Framing learned per connection | Assume single-NUL; assume padded | Both exist in this fleet's own firmware. Assuming either is silently wrong on the other |
 | D-04 | Writes discard their response | Parse and validate | The response wording is unmeasured. See "Writes" above |
-| D-05 | Poll, never push cached state on connect | Mirror the Control4 driver's `SyncStateToDevice` | The driver's approach is correct for the *only* controller and destructive for a second one — an HA restart would overwrite Control4's state on all 56 outputs |
+| D-05 | Poll, never push cached state on connect | Mirror the Control4 driver's `SyncStateToDevice` | **Rationale replaced 2026-08-29, decision unchanged.** The original reason — destructive for a *second* controller — died with coexistence. It survives on stronger ground: the matrix persists its own state, so a push on connect can only overwrite the truth with a stale cache. Worth noting this is where the integration deliberately differs from the driver it replaces, and it now does so as the sole controller rather than out of deference to another |
 | D-06 | Identity derived from `entry_id` | Host, or MAC | Reproduces the replaced integration exactly (C-02, C-07). Cleaner schemes orphan every existing entity |
 | D-07 | Per-output failure keeps the previous reading | Fail the whole poll | One flaky output must not blank 24 zones |
-| D-08 | Write then re-read that output only | Full refresh; optimistic update | The device may cap volume itself and another controller may have just moved the same zone. Optimistic state would show a value the device never adopted |
+| D-08 | Write then re-read that output only | Full refresh; optimistic update | The device caps volume against its own max-volume register, and **clamps out-of-range Q and input gain silently while reporting success**. Optimistic state would show a value the device never adopted. *(The second original reason — another controller may have just moved the zone — retired 2026-08-29 with coexistence. The first is sufficient alone, which is why the decision stands.)* |
 | D-09 | `MatrixSpec` value object | Keep threading two ints | Removes ~40 repeated parameter pairs and centralises the model-dependent ASG index |
 | D-10 | Tiered polling for DSP attributes | Poll everything; per-entity polling | Poll-everything violates NFR-01; per-entity polling breaks D-02's serialisation |
+| D-11 | Debounces wrap the write **and its re-read** | Debounce inside `AmsClient` | A debounce in the client returns before the write lands, so D-08's re-read reads pre-write state. The ordering inversion is silent — the value is plausible, just stale |
+| D-12 | An option decides which entity **exists**, never an entity's writability | "Read-only while tracking" flag | A setting that changes another entity's behaviour is a synchronised flag. Home Assistant has no read-only `number`, so it would mean raising on write or swapping platforms. `active_outputs` already sets the precedent |
+| D-13 | Bursty writes get a **named method**, not a flag on the write path | `send(..., bursty=True)` | Exactly one command replies with a burst. A flag would put the expensive quiet-socket drain in the hot path of every write to serve that one |
+| D-14 | One setting, two enforcement points | Max volume as a second entity; device register only | The value has a home already. A second home is two sources of truth; the device register is an additional *enforcement* of the same value, not a second value |
+| D-15 | EQ presets are a service, not a state entity | `select` per output | The device stores band values, not a preset ID. A `select` would show derived-or-fabricated state, and would be unavailable in the default configuration where DSP entities are disabled |
 
 ## Non-Functional Requirements
 
 | Requirement | Design response |
 |---|---|
 | NFR-01 — poll fits inside its interval | Serialised but pipelined-free; the drain timeout is skipped after three clean exchanges, so steady-state cost is one round trip per query. Tiered polling keeps disabled attributes off the wire |
-| NFR-02 — no churn regression | Coordinator publishes snapshots; entity state derives from them. Identical readings produce identical state, and Home Assistant records no event for an unchanged state |
+| NFR-02 — no churn regression | Coordinator publishes snapshots; entity state derives from them. Identical readings produce identical state, and Home Assistant records no event for an unchanged state. **Additionally, from 2026-08-29:** the 30 s default existed to notice Control4's changes promptly. With a single writer, state changes only when Home Assistant changes it, so the interval can lengthen substantially — the cheapest available win against this NFR, and one obtained by deleting a constraint rather than adding a mechanism. The new default is an implementation decision; what is recorded here is that its *justification* has gone |
 | NFR-03 — one matrix down affects only itself | No shared client, socket, coordinator or lock between entries |
 | C-03 — no site data published | `tests/test_no_site_data.py` enumerates every tracked file rather than grepping known values; the denylist itself stays gitignored |
 | C-08 — unauthenticated port | Not solvable in this layer. Recorded as accepted; the integration adds no new exposure beyond what Control4 already relies on |
@@ -246,19 +356,32 @@ and MAC**, since a diagnostics download is routinely pasted into public issue tr
 
 ## Requirements coverage
 
+The FR series is **defined in the requirements doc**; this table maps it to components. It does
+not define requirements — it used to, which is how a new requirement was numbered FR-08 on
+2026-08-29 and collided with an existing one.
+
 | Requirement | Covered by | Status |
 |---|---|---|
 | FR-01 routing/volume/mute/on-off | `media_player.py` | Implemented |
-| FR-02 tone + EQ | `number.py` + tiered polling | Designed, not built |
-| FR-03 input gain | `number.py` | Designed, not built |
-| FR-04 loudness, mono-sum | `switch.py` | Designed, not built |
-| FR-05 triggers | `switch.py`, `MatrixSpec.asg_index` | Designed, not built |
-| FR-06 audio sense | `binary_sensor.py` under A-01/A-02 | Designed, not built |
+| FR-02 tone + EQ | `number.py`, `select.py` + tiered polling | Implemented |
+| FR-03 input gain | `number.py` | Implemented |
+| FR-04 loudness, mono-sum | `switch.py` | Implemented |
+| FR-05 triggers | `switch.py`, `MatrixSpec.asg_index` | Implemented |
+| FR-06 audio sense | `binary_sensor.py` under A-01/A-02 | Implemented |
 | FR-07 grouping | — | **Withdrawn** — see below |
-| FR-08 firmware, connection state | `sensor.py` | Designed, not built |
+| FR-08 firmware, connection state | `sensor.py` | Implemented |
 | FR-09 UI config | `config_flow.py` | Implemented |
 | FR-10 HACS | `hacs.json`, CI validation | Implemented |
-| FR-11 services | `services.yaml` | Designed, not built |
+| FR-11 services | `services.py`, `services.yaml` | Implemented |
+| FR-12 turn-on volume tracking | `coordinator.py` debouncer + entry option; `number.py` / `sensor.py` | Designed, not built |
+| FR-13 routing debounce | `coordinator.py`, per-output `Debouncer` | Designed, not built |
+| FR-14 audio-sense setters | `switch.py`, `number.py` + burst drain in `client.py` | Designed, not built |
+| FR-15 max volume | `number.py`, value owned by the entry | Designed, not built |
+| FR-16 EQ presets | `ams/presets.py` + `apply_eq_preset` on `media_player` | Designed, not built |
+| FR-17 IP address diagnostic | `sensor.py`, `protocol.query_ip_address` | Designed, not built |
+
+*Statuses corrected 2026-08-29 — FR-02…FR-06, FR-08 and FR-11 had read "Designed, not built"
+since before those platforms shipped.*
 
 ### FR-07 grouping — withdrawn, on evidence
 
@@ -293,3 +416,26 @@ abandoned, or if a device group is ever genuinely configured.
 
 The group *commands* remain implemented in `protocol.py` and tested against the simulator. They
 are correct as far as the wire format goes; what is missing is any hardware here that uses them.
+
+**Re-examined 2026-08-29 under the replacement framing; withdrawal upheld, partly for a new
+reason.**
+
+The original argument was that the rewire would land first, making mirroring short-lived work.
+That premise weakened: the rewire is entangled with an impedance finding and folded into a wider
+audit, so it will *not* land inside the migration window. Under coexistence the pairing was at
+least maintained by Control4; after decommissioning nothing maintains it, and the slave output
+holds its last volume indefinitely.
+
+That strengthens the case for mirroring — and it is still declined, on a reason the original
+decision did not state:
+
+**Mirroring would ship faithful support for a configuration recorded as a defect.** The pairing
+drives a *synthesised* sub channel — there is no subwoofer — into a full-range outdoor satellite,
+in a zone already flagged as bridging below its amplifier's rated minimum. Encoding that into a
+public repository makes a local misconfiguration look like a product feature, and the code would
+outlive the defect it was built for.
+
+The behaviour is restored instead by a Home Assistant script linking the two outputs' volumes,
+which costs no integration code and is deleted when the rewire lands. One consequence worth
+stating plainly: decommissioning Control4 satisfies the "pairing undone in the Control4 driver"
+half of that backlog item for free, because the pairing exists nowhere else.
