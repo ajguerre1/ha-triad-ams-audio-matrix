@@ -264,13 +264,24 @@ class AmsClient:
             # taken under conditions that do not recur.
             self._forget_framing()
 
-        # The *first* frame only, and only to detect an outright refusal. Draining without ever
-        # looking meant a device that answered "Command error" instead of a burst was swallowed
-        # whole and the caller was told it succeeded -- the switch would report the setting it had
-        # just failed to make. Raised after the drain rather than instead of it, so the socket is
-        # left clean either way; and after the lock, so a raising path cannot hold it.
-        if first is not None and p.is_command_error(first):
-            raise CommandError(first or "empty response")
+            # **Nothing at all is not an empty burst.** The quiet socket that ends a burst can only
+            # be read as "the burst finished" if a burst started; zero frames means the device
+            # never answered, and treating that as success told the caller a matrix it cannot
+            # reach had accepted the command. Raising inside the lock is fine -- `async with`
+            # releases it on the way out.
+            if first is None:
+                self._reset()
+                msg = f"{self.host}:{self.port} did not answer a bursty write"
+                raise TransportError(msg)
+
+            # The *first* frame only, and only to detect an outright refusal. Draining without
+            # ever looking meant a device answering "Command error" instead of a burst was
+            # swallowed whole and the caller was told it succeeded -- the switch would report the
+            # setting it had just failed to make. Checked after the drain rather than instead of
+            # it, so the socket is left clean either way.
+            if p.is_command_error(first):
+                raise CommandError(first or "empty response")
+
         _LOGGER.debug("drained %d byte(s) of burst from %s:%s", drained, self.host, self.port)
         return drained
 

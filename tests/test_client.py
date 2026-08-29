@@ -332,3 +332,19 @@ class TestBurstyWrites:
             # transport failure.
             assert await client.get_audio_sense_enabled() in (True, False)
             await client.disconnect()
+
+    async def test_silence_is_not_mistaken_for_a_finished_burst(self) -> None:
+        """A quiet socket ends a burst only if a burst started.
+
+        With the matrix gone the write went nowhere, the read timed out, and zero frames read as
+        "the burst is over" -- so the caller was told a device it cannot reach had accepted the
+        command. Found by a repair-flow test that expected an abort and got a success.
+        """
+        sim = AmsSimulator(inputs=8)
+        await sim.start()
+        client = await _client(sim)
+        await client.firmware_version()
+        await sim.stop()
+
+        with pytest.raises(TransportError):
+            await client.set_audio_sense_enabled(enabled=True)
