@@ -151,7 +151,12 @@ class TriadOutputMediaPlayer(TriadOutputEntity, MediaPlayerEntity):
         being routed to something.
         """
         target = self._last_source or next(iter(sorted(self._sources)), None)
-        if target is None:
+        if target is None:  # pragma: no cover - unreachable by construction, see below
+            # `EntrySettings._active` treats an empty selection as "not chosen yet" and returns
+            # every channel, so `self._sources` is never empty and this cannot fire today. Kept
+            # rather than deleted because removing it makes the fallback a silent disconnect
+            # (`set_route(output, None)`) if that rule ever changes, and marked rather than left
+            # uncovered so the coverage report is not quietly carrying an untested branch.
             msg = "no inputs are enabled for this matrix"
             raise HomeAssistantError(msg)
         await self._route(target)
