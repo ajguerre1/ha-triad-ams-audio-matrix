@@ -276,3 +276,107 @@ class TestAddressingMode:
         """Tolerating unknown text must not extend to tolerating a failed command."""
         with pytest.raises(CommandError):
             p.parse_ip_mode("Command error")
+
+
+class TestBuildersNothingElseExercises:
+    """Builders reachable only from paths no other test walks.
+
+    Several are commands the integration deliberately does not expose -- power, the group set, the
+    device's own volume-step opcode. They are implemented because the protocol has them and the
+    document records them; leaving them unasserted means the wire format could drift from the
+    document with nothing to say so.
+    """
+
+    def test_the_devices_own_volume_step_opcodes(self) -> None:
+        """Not used by `media_player`, which steps from the last reading instead -- this opcode
+        ignores the configured cap, so a zone could be nudged past it one press at a time."""
+        assert p.step_output_volume(AMS8, 1, up=True) == bytes.fromhex("FF5503031300")
+        assert p.step_output_volume(AMS8, 1, up=False) == bytes.fromhex("FF5503031400")
+        assert p.step_output_volume(AMS8, 1, up=True, large=True) == bytes.fromhex("FF5503031500")
+        assert p.step_output_volume(AMS8, 1, up=False, large=True) == bytes.fromhex("FF5503031600")
+
+    def test_treble_and_balance_share_the_tone_encoding(self) -> None:
+        assert p.set_output_treble(AMS8, 1, 0) == bytes.fromhex("FF5504033000") + b""
+        assert p.set_output_balance(AMS8, 1, 0) == bytes.fromhex("FF55040331 0018".replace(" ", ""))
+        # -12 is full left / full cut, +12 full right / full boost.
+        assert p.set_output_balance(AMS8, 1, -12)[-1] == 0x00
+        assert p.set_output_balance(AMS8, 1, 12)[-1] == 0x30
+
+    def test_power_is_built_though_the_integration_never_sends_it(self) -> None:
+        """`media_player` on/off means routing. The device's power-on delay is long enough that the
+        Control4 driver disables the command outright, and this follows it."""
+        assert p.query_power() == bytes.fromhex("FF55030101F5")
+        assert p.set_power(on=True) == bytes.fromhex("FF5503010100")
+        assert p.set_power(on=False) == bytes.fromhex("FF5503010200")
+
+    def test_the_mac_query(self) -> None:
+        assert p.query_mac_address() == bytes.fromhex("FF55030880F5")
+
+    def test_the_group_commands_exist_although_no_hardware_here_uses_them(self) -> None:
+        """FR-07 was withdrawn on measurement -- all seven groups are empty on all three matrices
+        and the Control4 driver never calls `setOutputToGroup`. The wire format is still correct
+        and still recorded, so it stays asserted."""
+        assert p.assign_output_to_group(AMS8, 1, 1) == bytes.fromhex("FF550403320000")
+        assert p.query_group_volume(1) == bytes.fromhex("FF5504044 7F500".replace(" ", ""))
+        assert p.query_group_source(1) == bytes.fromhex("FF5504044 8F500".replace(" ", ""))
+
+    @pytest.mark.parametrize("group", [0, 8, -1])
+    def test_a_group_outside_a_to_g_is_refused(self, group: int) -> None:
+        with pytest.raises(ValueError, match=r"outside 1\.\.7"):
+            p.query_group_volume(group)
+
+
+class TestValuesRefusedBeforeTheWire:
+    """The device accepts several out-of-range writes and reports success, so the guard has to be
+    here. Each of these would otherwise be a silent wrong value rather than an error."""
+
+    @pytest.mark.parametrize("step", [-1, 101, 255])
+    def test_a_volume_step_outside_the_scale(self, step: int) -> None:
+        with pytest.raises(ValueError, match="volume step"):
+            p.set_output_volume(AMS8, 1, step)
+
+    @pytest.mark.parametrize("db", [-12.5, 12.5, 100])
+    def test_a_tone_value_outside_twelve_decibels(self, db: float) -> None:
+        with pytest.raises(ValueError, match=r"outside -12\.\.\+12"):
+            p.set_output_bass(AMS8, 1, db)
+
+    @pytest.mark.parametrize("gain", [-0.5, 12.5])
+    def test_an_input_gain_outside_the_boost_only_range(self, gain: float) -> None:
+        """Boost only, and the device **clamps** above 0x18 while reporting success -- raw 0x1E
+        still reads back 12. An out-of-range write would look like it worked."""
+        with pytest.raises(ValueError, match="input gain"):
+            p.set_input_gain(AMS8, 1, gain)
+
+
+class TestParsersRejectingMalformedText:
+    """The failure branches. Each exists because the alternative is believing a wrong value."""
+
+    def test_a_source_line_without_a_recognisable_input(self) -> None:
+        with pytest.raises(ParseError):
+            p.parse_output_route("Get Out[1] Input Source : something else entirely")
+
+    def test_a_mute_line_with_an_unknown_word(self) -> None:
+        with pytest.raises(ParseError):
+            p.parse_output_mute("Get Out[1] Mute status : perhaps")
+
+    def test_a_balance_line_that_is_neither_centre_nor_a_side(self) -> None:
+        with pytest.raises(ParseError):
+            p.parse_output_balance("Get Out[1] Balance : sideways")
+
+    def test_balance_reports_left_as_negative_and_right_as_positive(self) -> None:
+        """Sign convention, and it is the one place the device answers in words. Getting it
+        backwards would swap the channels of every corrected zone."""
+        assert p.parse_output_balance("Get Out[1] Balance : Bal L6") == (1, -6.0)
+        assert p.parse_output_balance("Get Out[1] Balance : Bal R6") == (1, 6.0)
+
+    def test_an_eq_frequency_with_an_unparseable_unit(self) -> None:
+        with pytest.raises(ParseError):
+            p.parse_eq_frequency("Get Out[1] Band 1 Freq : 63 furlongs")
+
+    def test_the_mac_address_is_read_out_of_its_line(self) -> None:
+        assert p.parse_mac_address("Get MAC Add AA:BB:CC:DD:EE:FF") == "AA:BB:CC:DD:EE:FF"
+
+    def test_a_static_address_reads_as_static(self) -> None:
+        """Unverified against hardware -- no unit here is statically addressed -- so this pins the
+        spelling the parser expects rather than one observed on a device."""
+        assert p.parse_ip_mode("static_ip") == "static"

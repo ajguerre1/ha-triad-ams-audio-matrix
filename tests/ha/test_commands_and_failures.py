@@ -242,3 +242,157 @@ class TestTheEqSelects:
             await hass.services.async_call(
                 "select", "select_option", {"entity_id": Q, "option": "1"}, blocking=True
             )
+
+
+BASS = "number.test_matrix_bass"
+TREBLE = "number.test_matrix_treble"
+BALANCE = "number.test_matrix_balance"
+GAIN_B1 = "number.test_matrix_eq_band_1_gain"
+INPUT_GAIN = "number.test_matrix_input_1_gain"
+OFF_DELAY = "number.test_matrix_audio_sense_off_delay"
+LOUDNESS = "switch.test_matrix_loudness"
+MONO = "switch.test_matrix_mono_sum"
+BANK_1 = "switch.test_matrix_trigger_outputs_1_8"
+ASG = "switch.test_matrix_asg_trigger"
+AUDIO_SENSE = "switch.test_matrix_audio_sense"
+
+
+async def _set_number(hass: HomeAssistant, entity_id: str, value: float) -> None:
+    await hass.services.async_call(
+        "number", "set_value", {"entity_id": entity_id, "value": value}, blocking=True
+    )
+    await hass.async_block_till_done()
+
+
+async def _switch(hass: HomeAssistant, entity_id: str, *, on: bool) -> None:
+    await hass.services.async_call(
+        "switch", "turn_on" if on else "turn_off", {"entity_id": entity_id}, blocking=True
+    )
+    await hass.async_block_till_done()
+
+
+class TestToneAndTheRestOfTheDsp:
+    async def test_treble_and_balance_round_trip(
+        self, hass: HomeAssistant, simulator: AmsSimulator
+    ) -> None:
+        """Bass had a test; its two siblings did not, though all three share one encoding and one
+        write path -- so a mistake in that shared path was only ever checked in one third."""
+        await _setup(hass, simulator, enable=[TREBLE, BALANCE])
+        await _set_number(hass, TREBLE, -6.0)
+        await _set_number(hass, BALANCE, 4.0)
+        assert simulator.state.channels[1].treble == -6.0
+        assert simulator.state.channels[1].balance == 4.0
+
+    async def test_input_gain_round_trips(
+        self, hass: HomeAssistant, simulator: AmsSimulator
+    ) -> None:
+        await _setup(hass, simulator, enable=[INPUT_GAIN])
+        await _set_number(hass, INPUT_GAIN, 6.0)
+        assert simulator.state.input_gain_raw[0] == 12  # sent doubled
+
+    async def test_set_eq_band_needs_at_least_one_parameter(
+        self, hass: HomeAssistant, simulator: AmsSimulator
+    ) -> None:
+        """Calling it empty would send nothing and re-read for no reason, which reads as success."""
+        await _setup(hass, simulator, enable=[GAIN_B1])
+        with pytest.raises(HomeAssistantError, match="at least one of"):
+            await hass.services.async_call(
+                "triad_ams", "set_eq_band", {"entity_id": GAIN_B1}, blocking=True
+            )
+
+    async def test_set_eq_band_writes_all_three_and_re_reads_once(
+        self, hass: HomeAssistant, simulator: AmsSimulator
+    ) -> None:
+        await _setup(hass, simulator, enable=[GAIN_B1])
+        await hass.services.async_call(
+            "triad_ams",
+            "set_eq_band",
+            {"entity_id": GAIN_B1, "frequency": 1000, "gain": -3.0, "q": 2.0},
+            blocking=True,
+        )
+        await hass.async_block_till_done()
+        channel = simulator.state.channels[1]
+        assert channel.band_freq[0] == 17  # 1 kHz
+        assert channel.band_gain[0] == -3.0
+        assert channel.band_q[0] == 6  # Q 2.0
+
+
+class TestTheSwitchesBothWays:
+    """Each switch had its `on` path tested and its `off` path not, though they are separate
+    opcodes on this hardware rather than one command with a flag."""
+
+    async def test_loudness_and_mono_toggle_both_directions(
+        self, hass: HomeAssistant, simulator: AmsSimulator
+    ) -> None:
+        await _setup(hass, simulator, enable=[LOUDNESS, MONO])
+        await _switch(hass, LOUDNESS, on=True)
+        assert simulator.state.channels[1].loudness is True
+        await _switch(hass, LOUDNESS, on=False)
+        assert simulator.state.channels[1].loudness is False
+
+        await _switch(hass, MONO, on=True)
+        assert simulator.state.channels[1].mono is True
+        await _switch(hass, MONO, on=False)
+        assert simulator.state.channels[1].mono is False
+
+    async def test_the_trigger_banks_toggle_both_directions(
+        self, hass: HomeAssistant, simulator: AmsSimulator
+    ) -> None:
+        await _setup(hass, simulator, enable=[BANK_1, ASG])
+        for entity in (BANK_1, ASG):
+            await _switch(hass, entity, on=True)
+            assert hass.states.get(entity).state == "on"
+            await _switch(hass, entity, on=False)
+            assert hass.states.get(entity).state == "off"
+
+
+class TestEveryWriteReportsItsFailure:
+    """One shared shape, applied per platform: TriadError becomes HomeAssistantError so a refused
+    command looks refused. Each wrapper is separate code, so each needs its own check."""
+
+    @pytest.mark.parametrize(
+        ("entity", "value", "match"),
+        [
+            (BASS, -6.0, "command failed for output 1"),
+            (INPUT_GAIN, 6.0, "command failed for input 1"),
+            (OFF_DELAY, 30, "could not set the audio-sense off delay"),
+        ],
+    )
+    async def test_a_refused_number_write(
+        self,
+        hass: HomeAssistant,
+        simulator: AmsSimulator,
+        entity: str,
+        value: float,
+        match: str,
+    ) -> None:
+        await _setup(hass, simulator, enable=[entity])
+        simulator.fail_next = Fault.COMMAND_ERROR
+        with pytest.raises(HomeAssistantError, match=match):
+            await _set_number(hass, entity, value)
+
+    async def test_a_refused_eq_band_service_names_the_band(
+        self, hass: HomeAssistant, simulator: AmsSimulator
+    ) -> None:
+        await _setup(hass, simulator, enable=[GAIN_B1])
+        simulator.fail_next = Fault.COMMAND_ERROR
+        with pytest.raises(HomeAssistantError, match="output 1 band 1"):
+            await hass.services.async_call(
+                "triad_ams", "set_eq_band", {"entity_id": GAIN_B1, "gain": -3.0}, blocking=True
+            )
+
+    @pytest.mark.parametrize(
+        ("entity", "match"),
+        [
+            (LOUDNESS, "command failed for output 1"),
+            (BANK_1, "trigger command failed"),
+            (AUDIO_SENSE, "could not change audio sense"),
+        ],
+    )
+    async def test_a_refused_switch_write(
+        self, hass: HomeAssistant, simulator: AmsSimulator, entity: str, match: str
+    ) -> None:
+        await _setup(hass, simulator, enable=[entity])
+        simulator.fail_next = Fault.COMMAND_ERROR
+        with pytest.raises(HomeAssistantError, match=match):
+            await _switch(hass, entity, on=True)
