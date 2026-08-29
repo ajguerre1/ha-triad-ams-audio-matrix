@@ -52,21 +52,28 @@ def make_entry(
     Version 1 / minor 4 and these key names are the schema written by
     ``bharat/homeassistant-triad-ams``. Reproducing them here is the whole point: entries in
     ``.storage`` survive a HACS uninstall, so the real installation loads entries of this shape
-    and any drift orphans 26 live entities.
+    and any drift orphans live entities.
+
+    Deriving the model from the simulator rather than hardcoding it is not tidiness: a 24-output
+    simulator paired with an entry claiming AMS8 gives the client an 8-output spec, so every
+    model-dependent index -- the ASG trigger above all -- is computed for the wrong matrix. A test
+    written that way passes or fails for reasons unrelated to what it is checking, which is how
+    the 24x24 ASG test failed on its first CI run.
     """
+    model = simulator.state.model
     return MockConfigEntry(
         domain=DOMAIN,
         title="Test Matrix",
-        unique_id=f"127.0.0.1:{simulator.port}:AMS8",
+        unique_id=f"127.0.0.1:{simulator.port}:{model}",
         version=version,
         minor_version=minor_version,
         data={
             "name": "Test Matrix",
             "host": "127.0.0.1",
             "port": simulator.port,
-            "model": "AMS8",
-            "output_count": 8,
-            "input_count": 8,
+            "model": model,
+            "output_count": simulator.state.outputs,
+            "input_count": simulator.state.inputs,
         },
         options=options or {},
     )
